@@ -1,9 +1,7 @@
-FROM debian:stable-slim
+FROM alpine:3.19
 
-# 安装 ffmpeg 和基础工具
-RUN apt update && \
-    apt install -y ffmpeg bash findutils coreutils && \
-    rm -rf /var/lib/apt/lists/*
+# 安装 ffmpeg（Alpine 的 ffmpeg 包含 ffprobe）
+RUN apk add --no-cache ffmpeg bash coreutils findutils
 
 WORKDIR /app
 
@@ -11,7 +9,7 @@ WORKDIR /app
 COPY youtube.sh /app/youtube.sh
 RUN chmod +x /app/youtube.sh
 
-# 设置默认环境变量（可以被外部覆盖）
+# 默认环境变量（可被外部覆盖）
 ENV RTMP_URL=""
 ENV VIDEO_DIR="/videos"
 ENV WATERMARK="no"

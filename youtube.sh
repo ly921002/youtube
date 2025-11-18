@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -e
 
-echo "===== FFmpeg 自动推流脚本（环境变量控制版）====="
+echo "===== FFmpeg 自动推流（自动识别全部视频格式）====="
 
 # ---------------------------
 # 环境变量
 # ---------------------------
 
-RTMP_URL="${RTMP_URL:?请设置 RTMP_URL 环境变量，例如 rtmp://xxx/live}"
+RTMP_URL="${RTMP_URL:?必须设置 RTMP_URL，例如 rtmp://xxx/live}"
 VIDEO_DIR="${VIDEO_DIR:-/videos}"
 WATERMARK="${WATERMARK:-no}"
 WATERMARK_IMG="${WATERMARK_IMG:-}"
@@ -25,7 +25,7 @@ fi
 
 if [ "$WATERMARK" = "yes" ]; then
     if [ ! -f "$WATERMARK_IMG" ]; then
-        echo "❌ ERROR: WATERMARK=yes 但未找到水印图像: $WATERMARK_IMG"
+        echo "❌ ERROR: WATERMARK=yes 但未找到图片: $WATERMARK_IMG"
         exit 1
     fi
     FILTER="-filter_complex overlay=W-w-5:5"
@@ -33,26 +33,54 @@ else
     FILTER=""
 fi
 
-echo "RTMP_URL     = $RTMP_URL"
-echo "VIDEO_DIR    = $VIDEO_DIR"
-echo "WATERMARK    = $WATERMARK"
-echo "SLEEP_MIN    = $SLEEP_MIN 秒"
-echo "SLEEP_MAX    = $SLEEP_MAX 秒"
+echo "推流地址: $RTMP_URL"
+echo "视频目录: $VIDEO_DIR"
+echo "水印开关: $WATERMARK"
+echo "随机休眠: ${SLEEP_MIN}-${SLEEP_MAX} 秒 中间"
 echo "========================================="
+
+# ---------------------------
+# 自动识别视频文件
+# ---------------------------
+
+function load_video_list() {
+    echo "🔍 正在扫描并检测可用视频格式..."
+
+    VIDEO_LIST=()
+
+    # 遍历所有文件，不限制扩展名
+    for f in "$VIDEO_DIR"/*; do
+        [ -f "$f" ] || continue
+
+        # ffprobe 检测视频可读性（不会输出内容）
+        if ffprobe -v error -show_entries stream=codec_type \
+            -of default=noprint_wrappers=1:nokey=1 "$f" | grep -q "video"; then
+            VIDEO_LIST+=("$f")
+        fi
+    done
+
+    if [ ${#VIDEO_LIST[@]} -eq 0 ]; then
+        echo "❌ ERROR: 未找到任何 FFmpeg 可识别的视频格式"
+        exit 1
+    fi
+
+    echo "✅ 找到 ${#VIDEO_LIST[@]} 个有效视频文件"
+}
+
+load_video_list
 
 # ---------------------------
 # 推流循环
 # ---------------------------
 
 while true; do
-    # 选随机视频
-    VIDEO=$(find "$VIDEO_DIR" -type f -name "*.mp4" | shuf -n 1)
-
-    if [ -z "$VIDEO" ]; then
-        echo "❌ 未找到任何 MP4 文件，请检查目录：$VIDEO_DIR"
-        sleep 5
-        continue
+    # 如目录内容更新，可重新加载列表（可选：每 20 次刷新一次）
+    if [ $((RANDOM % 20)) -eq 0 ]; then
+        load_video_list
     fi
+
+    # 随机选取一个视频
+    VIDEO="${VIDEO_LIST[RANDOM % ${#VIDEO_LIST[@]}]}"
 
     echo "▶ 正在推流: $VIDEO"
 
@@ -66,8 +94,8 @@ while true; do
         -b:a 192k \
         -f flv "$RTMP_URL"
 
-    # 每个视频播放完随机休息一下
+    # 结束后随机休眠
     SLEEP_TIME=$(shuf -i "$SLEEP_MIN"-"$SLEEP_MAX" -n 1)
-    echo "⏳ 等待 $SLEEP_TIME 秒后继续下一段推流..."
+    echo "⏳ 等待 $SLEEP_TIME 秒..."
     sleep "$SLEEP_TIME"
 done

@@ -57,7 +57,6 @@ sort_videos() {
     done < <(
         for f in "${files[@]}"; do
             local base=$(basename "$f")
-            # 提取前缀数字，如果没有则用 zzz 排在后面
             local prefix=$(echo "$base" | grep -o '^[0-9]\+')
             prefix=${prefix:-zzz}
             echo -e "${prefix}\t$f"
@@ -168,13 +167,19 @@ while true; do
     # 跑马灯字幕设置（中文/emoji/特殊字符安全）
     # ---------------------------
     SCROLL_TEXT="🎬 $base"
-    ESC_TEXT=${SCROLL_TEXT//:/\\:}
-    ESC_TEXT=${ESC_TEXT//\\/\\\\}
-    ESC_TEXT=${ESC_TEXT//\'/\\\'}
+    ESC_TEXT=${SCROLL_TEXT//\\/\\\\}
+    ESC_TEXT=${ESC_TEXT//:/\\:}
+    ESC_TEXT=${ESC_TEXT//'/\\'}
+    ESC_TEXT=${ESC_TEXT//!/\\!}
+    ESC_TEXT=${ESC_TEXT//?/\\?}
+    ESC_TEXT=${ESC_TEXT//(/\\(}
+    ESC_TEXT=${ESC_TEXT//)/\\)}
+    ESC_TEXT=${ESC_TEXT//【/\\[}
+    ESC_TEXT=${ESC_TEXT//】/\\]}
 
     TEXT_FILTER="drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:\
-text='$ESC_TEXT':fontsize=36:fontcolor=white:box=1:boxcolor=0x00000099:\
-x=w-mod(max(t*(w+tw)/10\\,w+tw),w+tw):y=h-60"
+text=\"$ESC_TEXT\":fontsize=36:fontcolor=white:box=1:boxcolor=0x00000099:\
+x=w-mod(t*100\,w+tw):y=h-60"
 
     if $USE_WATERMARK; then
         ffmpeg -loglevel verbose \

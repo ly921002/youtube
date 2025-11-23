@@ -196,9 +196,9 @@ while true; do
     # 构建参数
     mapfile -t FF_ARGS < <(build_ffmpeg_args "$video")
 
-    echo "▶️  FFmpeg 推流中..."
-    if ! ffmpeg -v warning "${FF_ARGS[@]}"; then
-        echo "⚠️ FFmpeg 推流失败，跳过此文件"
+    echo "▶️ FFmpeg 开始推流（已开启详细日志）..."
+    if ! ffmpeg -loglevel verbose "${FF_ARGS[@]}"; then
+        echo "❌ FFmpeg 推流失败！以下是错误原因 ↑"
     fi
 
     echo "⏳ 等待 ${SLEEP_SECONDS} 秒..."

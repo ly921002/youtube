@@ -46,7 +46,7 @@ echo "VPS 最大上传带宽: $MAX_UPLOAD"
 echo "========================================="
 
 # ---------------------------
-# 按数字前缀排序
+# 按数字前缀排序（修复 07/08 等报错）
 # ---------------------------
 sort_videos() {
     local files=("$@")
@@ -57,14 +57,10 @@ sort_videos() {
     done < <(
         for f in "${files[@]}"; do
             local base=$(basename "$f")
-            local prefix=999999
-
-            if [[ "$base" =~ ^([0-9]+)[-_\.] ]]; then prefix="${BASH_REMATCH[1]}"
-            elif [[ "$base" =~ ^([0-9]+) ]]; then prefix="${BASH_REMATCH[1]}"
-            fi
-
-            # 明确指定十进制，避免以0开头报错
-            printf "%06d\t%s\n" "10#$prefix" "$f"
+            # 提取前缀数字，如果没有则使用 999999
+            local prefix=$(echo "$base" | grep -o '^[0-9]\+')
+            prefix=${prefix:-999999}
+            printf "%06d\t%s\n" "$prefix" "$f"
         done | sort -n -k1,1 | cut -f2-
     )
 
@@ -169,19 +165,20 @@ while true; do
     echo "▶️ 开始推流（日志已打开）..."
 
     # ---------------------------
-    # 跑马灯字幕设置
+    # 跑马灯字幕设置（中文/emoji/特殊字符安全）
     # ---------------------------
     SCROLL_TEXT="🎬 $base"
-    # 转义冒号，去掉 drawtext 两边空格
+    ESC_TEXT=${SCROLL_TEXT//:/\\:}      # 转义冒号
+    ESC_TEXT=${ESC_TEXT//\'/\\\'}       # 转义单引号
     TEXT_FILTER="drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:\
-text='${SCROLL_TEXT//:/\\:}':fontsize=36:fontcolor=white:box=1:boxcolor=0x00000099:\
+text=\"$ESC_TEXT\":fontsize=36:fontcolor=white:box=1:boxcolor=0x00000099:\
 x=w-mod(max(t*(w+tw)/10\\,w+tw),w+tw):y=h-60"
 
     if $USE_WATERMARK; then
         ffmpeg -loglevel verbose \
             -re -i "$video" \
             -i "$WATERMARK_IMG" \
-            -filter_complex "[0:v][1:v]overlay=10:10,${TEXT_FILTER}" \
+            -filter_complex "[0:v][1:v]overlay=10:10,$TEXT_FILTER" \
             -c:v libx264 -preset superfast \
             -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
             -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \

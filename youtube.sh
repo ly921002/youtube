@@ -12,7 +12,7 @@ VIDEO_DIR="${VIDEO_DIR:-/videos}"
 WATERMARK="${WATERMARK:-no}"
 WATERMARK_IMG="${WATERMARK_IMG:-}"
 
-TARGET_FPS="${TARGET_FPS:-30}"
+TARGET_FPS="${TARGET_FPS:-24}"
 KEYFRAME_INTERVAL_SECONDS="${KEYFRAME_INTERVAL_SECONDS:-2}"
 
 # VPS 最大可用上传带宽限制（例如 VPS 上行 10Mbps）
@@ -220,10 +220,11 @@ while true; do
             -re -i "$video" \
             -i "$WATERMARK_IMG" \
             -filter_complex "$FILTER_COMPLEX" \
-            -c:v libx264 -preset superfast \
+            -c:v libx264 -preset ultrafast -tune zerolatency \
             -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
             -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
             -c:a aac -b:a 160k \
+            -threads 2 \
             -f flv "$RTMP_URL"
 
     else
@@ -233,19 +234,21 @@ while true; do
             ffmpeg -loglevel verbose \
                 -re -i "$video" \
                 -vf "$TEXT_FILTER" \
-                -c:v libx264 -preset veryfast -tune zerolatency \
+                -c:v libx264 -preset ultrafast -tune zerolatency \
                 -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
                 -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
                 -c:a aac -b:a 160k \
+                -threads 2 \
                 -f flv "$RTMP_URL"
         else
             # 无水印 + 无文字 (原样推流，效率最高)
             ffmpeg -loglevel verbose \
                 -re -i "$video" \
-                -c:v libx264 -preset veryfast -tune zerolatency \
+                -c:v libx264 -preset ultrafast -tune zerolatency \
                 -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
                 -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
                 -c:a aac -b:a 160k \
+                -threads 2 \
                 -f flv "$RTMP_URL"
         fi
     fi

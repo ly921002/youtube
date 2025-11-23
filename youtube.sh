@@ -46,7 +46,7 @@ echo "VPS 最大上传带宽: $MAX_UPLOAD"
 echo "========================================="
 
 # ---------------------------
-# 按数字前缀排序（修复 07/08 等报错）
+# 按数字前缀排序（支持 07/09 等）
 # ---------------------------
 sort_videos() {
     local files=("$@")
@@ -57,11 +57,11 @@ sort_videos() {
     done < <(
         for f in "${files[@]}"; do
             local base=$(basename "$f")
-            # 提取前缀数字，如果没有则使用 999999
+            # 提取前缀数字，如果没有则用 zzz 排在后面
             local prefix=$(echo "$base" | grep -o '^[0-9]\+')
-            prefix=${prefix:-999999}
-            printf "%06d\t%s\n" "$prefix" "$f"
-        done | sort -n -k1,1 | cut -f2-
+            prefix=${prefix:-zzz}
+            echo -e "${prefix}\t$f"
+        done | sort -k1,1n | cut -f2-
     )
 
     printf '%s\n' "${out[@]}"
@@ -168,10 +168,12 @@ while true; do
     # 跑马灯字幕设置（中文/emoji/特殊字符安全）
     # ---------------------------
     SCROLL_TEXT="🎬 $base"
-    ESC_TEXT=${SCROLL_TEXT//:/\\:}      # 转义冒号
-    ESC_TEXT=${ESC_TEXT//\'/\\\'}       # 转义单引号
+    ESC_TEXT=${SCROLL_TEXT//:/\\:}
+    ESC_TEXT=${ESC_TEXT//\\/\\\\}
+    ESC_TEXT=${ESC_TEXT//\'/\\\'}
+
     TEXT_FILTER="drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:\
-text=\"$ESC_TEXT\":fontsize=36:fontcolor=white:box=1:boxcolor=0x00000099:\
+text='$ESC_TEXT':fontsize=36:fontcolor=white:box=1:boxcolor=0x00000099:\
 x=w-mod(max(t*(w+tw)/10\\,w+tw),w+tw):y=h-60"
 
     if $USE_WATERMARK; then

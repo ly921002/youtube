@@ -13,7 +13,7 @@ WATERMARK="${WATERMARK:-no}"
 WATERMARK_IMG="${WATERMARK_IMG:-}"
 
 TARGET_FPS="${TARGET_FPS:-30}"
-KEYFRAME_INTERVAL_SECONDS="${KEYFRAME_INTERVAL_SECONDS:-4}"
+KEYFRAME_INTERVAL_SECONDS="${KEYFRAME_INTERVAL_SECONDS:-2}"
 
 # VPS 最大可用上传带宽限制（例如 VPS 上行 10Mbps）
 # 可在 Docker 启动时 -e MAX_UPLOAD="8000k" 覆盖
@@ -180,7 +180,7 @@ while true; do
             -re -i "$video" \
             -i "$WATERMARK_IMG" \
             -filter_complex "overlay=10:10" \
-            -c:v libx264 -preset veryfast \
+            -c:v libx264 -preset superfast \
             -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
             -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
             -c:a aac -b:a 160k \
@@ -188,7 +188,7 @@ while true; do
     else
         ffmpeg -loglevel verbose \
             -re -i "$video" \
-            -c:v libx264 -preset veryfast \
+            -c:v libx264 -preset veryfast  -tune zerolatency \
             -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
             -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
             -c:a aac -b:a 160k \

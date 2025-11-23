@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "===== FFmpeg 自动推流（顺序循环播放 + 智能码率 + 跑马灯字幕）====="
+echo "===== FFmpeg 自动推流（顺序循环播放 + 智能码率）====="
 
 # ---------------------------
 # 环境变量
@@ -15,6 +15,8 @@ WATERMARK_IMG="${WATERMARK_IMG:-}"
 TARGET_FPS="${TARGET_FPS:-30}"
 KEYFRAME_INTERVAL_SECONDS="${KEYFRAME_INTERVAL_SECONDS:-2}"
 
+# VPS 最大可用上传带宽限制（例如 VPS 上行 10Mbps）
+# 可在 Docker 启动时 -e MAX_UPLOAD="8000k" 覆盖
 MAX_UPLOAD="${MAX_UPLOAD:-10000k}"
 
 SLEEP_SECONDS="${SLEEP_SECONDS:-10}"
@@ -46,7 +48,7 @@ echo "VPS 最大上传带宽: $MAX_UPLOAD"
 echo "========================================="
 
 # ---------------------------
-# 按数字前缀排序（支持 07/09 等）
+# 按数字前缀排序
 # ---------------------------
 sort_videos() {
     local files=("$@")
@@ -57,10 +59,14 @@ sort_videos() {
     done < <(
         for f in "${files[@]}"; do
             local base=$(basename "$f")
-            local prefix=$(echo "$base" | grep -o '^[0-9]\+')
-            prefix=${prefix:-zzz}
-            echo -e "${prefix}\t$f"
-        done | sort -k1,1n | cut -f2-
+            local prefix=999999
+
+            if   [[ "$base" =~ ^([0-9]+)[-_\.] ]]; then prefix="${BASH_REMATCH[1]}"
+            elif [[ "$base" =~ ^([0-9]+)       ]]; then prefix="${BASH_REMATCH[1]}"
+            fi
+
+            printf "%06d\t%s\n" "$prefix" "$f"
+        done | sort -n -k1,1 | cut -f2-
     )
 
     printf '%s\n' "${out[@]}"
@@ -105,18 +111,22 @@ load_video_list() {
 choose_bitrate() {
     local width="$1" height="$2"
 
-    local v_b="3000k" maxr="3500k" buf="6000k"
+    # 默认 720p
+    local v_b="3000k"   # 视频码率
+    local maxr="3500k"  # 最大码率
+    local buf="6000k"
 
-    if (( height >= 2160 )); then
+    if   (( height >= 2160 )); then  # 4K
         v_b="14000k"; maxr="15000k"; buf="20000k"
-    elif (( height >= 1440 )); then
+    elif (( height >= 1440 )); then  # 2K
         v_b="9000k"; maxr="10000k"; buf="16000k"
-    elif (( height >= 1080 )); then
+    elif (( height >= 1080 )); then  # 1080p
         v_b="5500k"; maxr="6000k"; buf="9000k"
-    elif (( height >= 720 )); then
+    elif (( height >= 720 )); then   # 720p
         v_b="3000k"; maxr="3500k"; buf="6000k"
     fi
 
+    # VPS 限速（取最小值）
     local v_bps=${v_b%k}
     local maxr_bps=${maxr%k}
     local upl_bps=${MAX_UPLOAD%k}
@@ -146,6 +156,7 @@ while true; do
     echo ""
     echo "🎬 播放第 $((index+1))/$TOTAL 个视频：$base"
 
+    # 解析视频分辨率
     res=$(ffprobe -v error -select_streams v:0 \
         -show_entries stream=width,height \
         -of csv=p=0 "$video")
@@ -153,8 +164,10 @@ while true; do
     WIDTH=$(echo "$res" | cut -d',' -f1)
     HEIGHT=$(echo "$res" | cut -d',' -f2)
 
+
     echo "分辨率：${WIDTH}x${HEIGHT}"
 
+    # 自动选择码率
     choose_bitrate "$WIDTH" "$HEIGHT"
 
     echo "自动码率：VIDEO=$VIDEO_BITRATE  MAXRATE=$MAXRATE  BUF=$VIDEO_BUFSIZE"
@@ -162,30 +175,11 @@ while true; do
     GOP=$((TARGET_FPS * KEYFRAME_INTERVAL_SECONDS))
 
     echo "▶️ 开始推流（日志已打开）..."
-
-    # ---------------------------
-    # 跑马灯字幕设置（中文/emoji/特殊字符安全）
-    # ---------------------------
-    SCROLL_TEXT="🎬 $base"
-    ESC_TEXT=${SCROLL_TEXT//\\/\\\\}
-    ESC_TEXT=${ESC_TEXT//:/\\:}
-    ESC_TEXT=${ESC_TEXT//'/\\'}
-    ESC_TEXT=${ESC_TEXT//!/\\!}
-    ESC_TEXT=${ESC_TEXT//?/\\?}
-    ESC_TEXT=${ESC_TEXT//(/\\(}
-    ESC_TEXT=${ESC_TEXT//)/\\)}
-    ESC_TEXT=${ESC_TEXT//【/\\[}
-    ESC_TEXT=${ESC_TEXT//】/\\]}
-
-    TEXT_FILTER="drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:\
-text=\"$ESC_TEXT\":fontsize=36:fontcolor=white:box=1:boxcolor=0x00000099:\
-x=w-mod(t*100\,w+tw):y=h-60"
-
     if $USE_WATERMARK; then
         ffmpeg -loglevel verbose \
             -re -i "$video" \
             -i "$WATERMARK_IMG" \
-            -filter_complex "[0:v][1:v]overlay=10:10,$TEXT_FILTER" \
+            -filter_complex "overlay=10:10" \
             -c:v libx264 -preset superfast \
             -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
             -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
@@ -194,8 +188,7 @@ x=w-mod(t*100\,w+tw):y=h-60"
     else
         ffmpeg -loglevel verbose \
             -re -i "$video" \
-            -vf "$TEXT_FILTER" \
-            -c:v libx264 -preset veryfast -tune zerolatency \
+            -c:v libx264 -preset veryfast  -tune zerolatency \
             -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
             -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
             -c:a aac -b:a 160k \
@@ -205,6 +198,7 @@ x=w-mod(t*100\,w+tw):y=h-60"
     echo "⏳ 等待 $SLEEP_SECONDS 秒..."
     sleep "$SLEEP_SECONDS"
 
+    # 下一条
     index=$(( (index + 1) % TOTAL ))
 
     if [[ $index -eq 0 ]]; then

@@ -59,10 +59,12 @@ sort_videos() {
             local base=$(basename "$f")
             local prefix=999999
 
-            if [[ "$base" =~ ^([0-9]+)[-_\.] ]]; then prefix="${BASH_REMATCH[1]}"; 
-            elif [[ "$base" =~ ^([0-9]+) ]]; then prefix="${BASH_REMATCH[1]}"; fi
+            if [[ "$base" =~ ^([0-9]+)[-_\.] ]]; then prefix="${BASH_REMATCH[1]}"
+            elif [[ "$base" =~ ^([0-9]+) ]]; then prefix="${BASH_REMATCH[1]}"
+            fi
 
-            printf "%06d\t%s\n" "$prefix" "$f"
+            # 明确指定十进制，避免以0开头报错
+            printf "%06d\t%s\n" "10#$prefix" "$f"
         done | sort -n -k1,1 | cut -f2-
     )
 
@@ -170,9 +172,10 @@ while true; do
     # 跑马灯字幕设置
     # ---------------------------
     SCROLL_TEXT="🎬 $base"
-    TEXT_FILTER="drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf: \
-text='$SCROLL_TEXT': fontsize=36: fontcolor=white: box=1: boxcolor=0x00000099: \
-x=w-mod(max(t*(w+tw)/10\\,w+tw),w+tw): y=h-60"
+    # 转义冒号，去掉 drawtext 两边空格
+    TEXT_FILTER="drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:\
+text='${SCROLL_TEXT//:/\\:}':fontsize=36:fontcolor=white:box=1:boxcolor=0x00000099:\
+x=w-mod(max(t*(w+tw)/10\\,w+tw),w+tw):y=h-60"
 
     if $USE_WATERMARK; then
         ffmpeg -loglevel verbose \

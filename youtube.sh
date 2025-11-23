@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
-echo "===== FFmpeg 自动推流（自动识别全部视频格式）====="
+echo "===== FFmpeg 自动推流（顺序循环播放）====="
 
 # ---------------------------
 # 环境变量
@@ -9,93 +9,207 @@ echo "===== FFmpeg 自动推流（自动识别全部视频格式）====="
 
 RTMP_URL="${RTMP_URL:?必须设置 RTMP_URL，例如 rtmp://xxx/live}"
 VIDEO_DIR="${VIDEO_DIR:-/videos}"
+
 WATERMARK="${WATERMARK:-no}"
 WATERMARK_IMG="${WATERMARK_IMG:-}"
-SLEEP_MIN="${SLEEP_MIN:-5}"
-SLEEP_MAX="${SLEEP_MAX:-15}"
+
+VIDEO_BITRATE="${VIDEO_BITRATE:-1000k}"
+AUDIO_BITRATE="${AUDIO_BITRATE:-128k}"
+VIDEO_BUFSIZE="${VIDEO_BUFSIZE:-2000k}"
+MAXRATE="${MAXRATE:-1200k}"
+KEYFRAME_INTERVAL_SECONDS="${KEYFRAME_INTERVAL_SECONDS:-4}"
+TARGET_FPS="${TARGET_FPS:-30}"
+
+VIDEO_EXTENSIONS="${VIDEO_EXTENSIONS:-mp4,avi,mkv,mov,flv,wmv,webm}"
+SLEEP_SECONDS="${SLEEP_SECONDS:-10}"   # 固定休眠，不要随机
 
 # ---------------------------
-# 检查环境
+# 基础检查
 # ---------------------------
 
-if [ ! -d "$VIDEO_DIR" ]; then
-    echo "❌ ERROR: VIDEO_DIR 目录不存在: $VIDEO_DIR"
+if [[ ! -d "$VIDEO_DIR" ]]; then
+    echo "❌ VIDEO_DIR 不存在: $VIDEO_DIR"
     exit 1
 fi
 
-if [ "$WATERMARK" = "yes" ]; then
-    if [ ! -f "$WATERMARK_IMG" ]; then
-        echo "❌ ERROR: WATERMARK=yes 但未找到图片: $WATERMARK_IMG"
+if [[ "$WATERMARK" = "yes" ]]; then
+    if [[ ! -f "$WATERMARK_IMG" ]]; then
+        echo "❌ 水印启用，但 WATERMARK_IMG 不存在: $WATERMARK_IMG"
         exit 1
     fi
-    FILTER="-filter_complex overlay=W-w-5:5"
+    USE_WATERMARK=true
 else
-    FILTER=""
+    USE_WATERMARK=false
 fi
 
 echo "推流地址: $RTMP_URL"
 echo "视频目录: $VIDEO_DIR"
 echo "水印开关: $WATERMARK"
-echo "随机休眠: ${SLEEP_MIN}-${SLEEP_MAX} 秒 中间"
 echo "========================================="
 
+
 # ---------------------------
-# 自动识别视频文件
+# 通用排序函数（按数字前缀排序）
 # ---------------------------
+sort_videos() {
+    local files=("$@")
+    local out=()
 
-function load_video_list() {
-    echo "🔍 正在扫描并检测可用视频格式..."
+    while IFS= read -r line; do
+        out+=("$line")
+    done < <(
+        for f in "${files[@]}"; do
+            local base prefix
+            base=$(basename "$f")
 
-    VIDEO_LIST=()
+            if [[ "$base" =~ ^([0-9]+)[-_\.] ]]; then
+                prefix="${BASH_REMATCH[1]}"
+            elif [[ "$base" =~ ^([0-9]+) ]]; then
+                prefix="${BASH_REMATCH[1]}"
+            else
+                prefix=999999
+            fi
 
-    # 遍历所有文件，不限制扩展名
-    for f in "$VIDEO_DIR"/*; do
-        [ -f "$f" ] || continue
+            printf "%06d\t%s\n" "$prefix" "$f"
+        done | sort -n -k1,1 | cut -f2-
+    )
 
-        # ffprobe 检测视频可读性（不会输出内容）
-        if ffprobe -v error -show_entries stream=codec_type \
-            -of default=noprint_wrappers=1:nokey=1 "$f" | grep -q "video"; then
-            VIDEO_LIST+=("$f")
-        fi
+    printf '%s\n' "${out[@]}"
+}
+
+
+# ---------------------------
+# 加载视频列表
+# ---------------------------
+load_video_list() {
+    local exts ext
+
+    IFS=',' read -ra exts <<< "$VIDEO_EXTENSIONS"
+    local args=()
+
+    for ext in "${exts[@]}"; do
+        args+=(-name "*.${ext,,}")
+        args+=(-o)
+        args+=(-name "*.${ext^^}")
+        args+=(-o)
     done
+    unset 'args[${#args[@]}-1]'  # 去掉最后一个 -o
 
-    if [ ${#VIDEO_LIST[@]} -eq 0 ]; then
-        echo "❌ ERROR: 未找到任何 FFmpeg 可识别的视频格式"
+    local raw_files=()
+
+    while IFS= read -r -d '' f; do
+        raw_files+=("$f")
+    done < <(find "$VIDEO_DIR" -maxdepth 1 -type f \( "${args[@]}" \) -print0)
+
+    if [[ ${#raw_files[@]} -eq 0 ]]; then
+        echo "❌ 未找到任何视频文件"
         exit 1
     fi
 
-    echo "✅ 找到 ${#VIDEO_LIST[@]} 个有效视频文件"
-}
+    # 过滤有效视频（只跑一次 ffprobe）
+    local valid=()
+    for f in "${raw_files[@]}"; do
+        if ffprobe -v error -select_streams v:0 -show_entries stream=codec_type \
+            -of default=nw=1:nk=1 "$f" 2>/dev/null | grep -q video; then
+            valid+=("$f")
+        fi
+    done
 
-load_video_list
-
-# ---------------------------
-# 推流循环
-# ---------------------------
-
-while true; do
-    # 如目录内容更新，可重新加载列表（可选：每 20 次刷新一次）
-    if [ $((RANDOM % 20)) -eq 0 ]; then
-        load_video_list
+    if [[ ${#valid[@]} -eq 0 ]]; then
+        echo "❌ 找到文件，但均不是有效视频"
+        exit 1
     fi
 
-    # 随机选取一个视频
-    VIDEO="${VIDEO_LIST[RANDOM % ${#VIDEO_LIST[@]}]}"
+    mapfile -t VIDEO_LIST < <(sort_videos "${valid[@]}")
+}
 
-    echo "▶ 正在推流: $VIDEO"
 
-    ffmpeg \
-        -re \
-        -i "$VIDEO" \
-        $FILTER \
-        -c:v libx264 \
-        -preset veryfast \
-        -c:a aac \
-        -b:a 192k \
+# ---------------------------
+# 显示视频信息
+# ---------------------------
+show_video_info() {
+    local f="$1"
+    local base=$(basename "$f")
+
+    local info=$(ffprobe -v error -select_streams v:0 \
+        -show_entries stream=width,height \
+        -of csv=s=x:p=0 "$f" 2>/dev/null || echo "unknown")
+
+    echo "文件：$base ($info)"
+}
+
+
+# ---------------------------
+# 构造 FFmpeg 参数
+# ---------------------------
+build_ffmpeg_args() {
+    local video="$1"
+    local gop=$((KEYFRAME_INTERVAL_SECONDS * TARGET_FPS))
+
+    local args=(
+        -re
+        -i "$video"
+    )
+
+    if $USE_WATERMARK; then
+        args+=(
+            -i "$WATERMARK_IMG"
+            -filter_complex "[1:v]scale=iw/6:-1[wm];[0:v][wm]overlay=W-w-10:10"
+        )
+    fi
+
+    args+=(
+        -c:v libx264
+        -preset veryfast
+        -b:v "$VIDEO_BITRATE"
+        -maxrate "$MAXRATE"
+        -bufsize "$VIDEO_BUFSIZE"
+        -g "$gop"
+        -keyint_min "$gop"
+        -r "$TARGET_FPS"
+        -c:a aac
+        -b:a "$AUDIO_BITRATE"
         -f flv "$RTMP_URL"
+    )
 
-    # 结束后随机休眠
-    SLEEP_TIME=$(shuf -i "$SLEEP_MIN"-"$SLEEP_MAX" -n 1)
-    echo "⏳ 等待 $SLEEP_TIME 秒..."
-    sleep "$SLEEP_TIME"
+    printf '%s\n' "${args[@]}"
+}
+
+
+# ---------------------------
+# 主流程
+# ---------------------------
+
+echo "🔍 加载视频列表..."
+load_video_list
+TOTAL=${#VIDEO_LIST[@]}
+echo "📁 共找到 $TOTAL 个视频"
+
+index=0
+
+while true; do
+    video="${VIDEO_LIST[$index]}"
+    echo ""
+    echo "🎬 播放第 $((index+1))/$TOTAL 个视频"
+    show_video_info "$video"
+
+    # 构建参数
+    mapfile -t FF_ARGS < <(build_ffmpeg_args "$video")
+
+    echo "▶️  FFmpeg 推流中..."
+    if ! ffmpeg -v warning "${FF_ARGS[@]}"; then
+        echo "⚠️ FFmpeg 推流失败，跳过此文件"
+    fi
+
+    echo "⏳ 等待 ${SLEEP_SECONDS} 秒..."
+    sleep "$SLEEP_SECONDS"
+
+    index=$(( (index + 1) % TOTAL ))
+
+    # 每完成一轮，重新扫描视频（用于新增文件）
+    if [[ $index -eq 0 ]]; then
+        echo "🔄 重新扫描目录..."
+        load_video_list
+        TOTAL=${#VIDEO_LIST[@]}
+    fi
 done

@@ -220,7 +220,7 @@ while true; do
             -re -i "$video" \
             -i "$WATERMARK_IMG" \
             -filter_complex "$FILTER_COMPLEX" \
-            -c:v libx264 -preset ultrafast -tune zerolatency \
+            -c:v libx264 -preset superfast -tune zerolatency \
             -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
             -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
             -c:a aac -b:a 160k \
@@ -233,7 +233,7 @@ while true; do
             ffmpeg -loglevel verbose \
                 -re -i "$video" \
                 -vf "$TEXT_FILTER" \
-                -c:v libx264 -preset ultrafast -tune zerolatency \
+                -c:v libx264 -preset superfast -tune zerolatency \
                 -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
                 -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
                 -c:a aac -b:a 160k \
@@ -242,7 +242,7 @@ while true; do
             # 无水印 + 无文字 (原样推流，效率最高)
             ffmpeg -loglevel verbose \
                 -re -i "$video" \
-                -c:v libx264 -preset ultrafast -tune zerolatency \
+                -c:v libx264 -preset superfast -tune zerolatency \
                 -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
                 -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
                 -c:a aac -b:a 160k \

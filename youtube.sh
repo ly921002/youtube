@@ -67,9 +67,15 @@ sort_videos() {
             local base=$(basename "$f")
             local prefix=999999
 
+            # 提取文件名前面的数字
             if   [[ "$base" =~ ^([0-9]+)[-_\.] ]]; then prefix="${BASH_REMATCH[1]}"
             elif [[ "$base" =~ ^([0-9]+)       ]]; then prefix="${BASH_REMATCH[1]}"
             fi
+
+            # 【核心修复点】
+            # $((10#...)) 语法强制 bash 使用 10 进制解析数字
+            # 这样 '08' 就会被解析为数字 8，而不是错误的八进制
+            prefix=$((10#$prefix))
 
             printf "%06d\t%s\n" "$prefix" "$f"
         done | sort -n -k1,1 | cut -f2-

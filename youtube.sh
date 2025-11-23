@@ -22,6 +22,12 @@ MAX_UPLOAD="${MAX_UPLOAD:-10000k}"
 SLEEP_SECONDS="${SLEEP_SECONDS:-10}"
 
 VIDEO_EXTENSIONS="${VIDEO_EXTENSIONS:-mp4,avi,mkv,mov,flv,wmv,webm}"
+# 是否在画面显示文件名 (yes/no)
+SHOW_FILENAME="${SHOW_FILENAME:-yes}"
+# 字体路径 (如果 VPS 是最小化安装，可能需要安装 ttf-dejavu 或指定字体文件路径)
+# 如果留空，FFmpeg 会尝试使用系统默认字体
+FONT_FILE="${FONT_FILE:-}"
+
 
 # ---------------------------
 # 基础检查
@@ -164,7 +170,6 @@ while true; do
     WIDTH=$(echo "$res" | cut -d',' -f1)
     HEIGHT=$(echo "$res" | cut -d',' -f2)
 
-
     echo "分辨率：${WIDTH}x${HEIGHT}"
 
     # 自动选择码率
@@ -174,25 +179,69 @@ while true; do
 
     GOP=$((TARGET_FPS * KEYFRAME_INTERVAL_SECONDS))
 
+    # ==========================================
+    # [新增] 构建文字滤镜 (drawtext)
+    # ==========================================
+    TEXT_FILTER=""
+    if [[ "$SHOW_FILENAME" == "yes" ]]; then
+        # 1. 对文件名进行转义，防止 FFmpeg 滤镜解析错误 (处理冒号和单引号)
+        safe_name=$(echo "$base" | sed "s/:/\\\\\\\\:/g" | sed "s/'/\\\\\\\\'/g")
+        
+        # 2. 构建滤镜字符串
+        # x=10:y=h-th-10 (左下角), fontsize=24, fontcolor=white, 黑色半透明背景框
+        TEXT_FILTER="drawtext=text='$safe_name':fontcolor=white:fontsize=24:x=10:y=h-th-10:box=1:boxcolor=black@0.5:boxborderw=5"
+        
+        # 如果指定了字体文件，加入 fontfile 参数
+        if [[ -n "$FONT_FILE" && -f "$FONT_FILE" ]]; then
+             TEXT_FILTER="drawtext=fontfile='$FONT_FILE':text='$safe_name':fontcolor=white:fontsize=24:x=10:y=h-th-10:box=1:boxcolor=black@0.5:boxborderw=5"
+        fi
+    fi
+
     echo "▶️ 开始推流（日志已打开）..."
+
     if $USE_WATERMARK; then
+        # 场景 A: 有水印
+        FILTER_COMPLEX=""
+        if [[ -n "$TEXT_FILTER" ]]; then
+            # 水印 + 文字：先 overlay 得到 [bg]，再在 [bg] 上 drawtext
+            FILTER_COMPLEX="[0:v][1:v]overlay=10:10[bg];[bg]${TEXT_FILTER}"
+        else
+            # 仅水印
+            FILTER_COMPLEX="overlay=10:10"
+        fi
+
         ffmpeg -loglevel verbose \
             -re -i "$video" \
             -i "$WATERMARK_IMG" \
-            -filter_complex "overlay=10:10" \
+            -filter_complex "$FILTER_COMPLEX" \
             -c:v libx264 -preset superfast \
             -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
             -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
             -c:a aac -b:a 160k \
             -f flv "$RTMP_URL"
+
     else
-        ffmpeg -loglevel verbose \
-            -re -i "$video" \
-            -c:v libx264 -preset veryfast  -tune zerolatency \
-            -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
-            -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
-            -c:a aac -b:a 160k \
-            -f flv "$RTMP_URL"
+        # 场景 B: 无水印
+        if [[ -n "$TEXT_FILTER" ]]; then
+            # 无水印 + 有文字 (使用 -vf)
+            ffmpeg -loglevel verbose \
+                -re -i "$video" \
+                -vf "$TEXT_FILTER" \
+                -c:v libx264 -preset veryfast -tune zerolatency \
+                -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
+                -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
+                -c:a aac -b:a 160k \
+                -f flv "$RTMP_URL"
+        else
+            # 无水印 + 无文字 (原样推流，效率最高)
+            ffmpeg -loglevel verbose \
+                -re -i "$video" \
+                -c:v libx264 -preset veryfast -tune zerolatency \
+                -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
+                -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
+                -c:a aac -b:a 160k \
+                -f flv "$RTMP_URL"
+        fi
     fi
 
     echo "⏳ 等待 $SLEEP_SECONDS 秒..."

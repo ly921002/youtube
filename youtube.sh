@@ -224,7 +224,6 @@ while true; do
             -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
             -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
             -c:a aac -b:a 160k \
-            -threads 2 \
             -f flv "$RTMP_URL"
 
     else
@@ -238,7 +237,6 @@ while true; do
                 -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
                 -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
                 -c:a aac -b:a 160k \
-                -threads 2 \
                 -f flv "$RTMP_URL"
         else
             # 无水印 + 无文字 (原样推流，效率最高)
@@ -248,7 +246,6 @@ while true; do
                 -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
                 -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
                 -c:a aac -b:a 160k \
-                -threads 2 \
                 -f flv "$RTMP_URL"
         fi
     fi

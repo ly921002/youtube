@@ -157,8 +157,13 @@ while true; do
     echo "🎬 播放第 $((index+1))/$TOTAL 个视频：$base"
 
     # 解析视频分辨率
-    read WIDTH HEIGHT <<< $(ffprobe -v error -select_streams v:0 \
-        -show_entries stream=width,height -of csv=p=0 "$video")
+    res=$(ffprobe -v error -select_streams v:0 \
+        -show_entries stream=width,height \
+        -of csv=p=0 "$video")
+    
+    WIDTH=$(echo "$res" | cut -d',' -f1)
+    HEIGHT=$(echo "$res" | cut -d',' -f2)
+
 
     echo "分辨率：${WIDTH}x${HEIGHT}"
 

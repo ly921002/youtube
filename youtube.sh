@@ -164,11 +164,13 @@ index=0
 
 # 构建多路输出参数 (只需构建一次)
 OUTPUTS=()
+URL_COUNT=0
 for url in $MULTI_RTMP_URLS; do
     OUTPUTS+=("-f" "flv" "$url")
+    ((URL_COUNT++))
 done
-OUTPUT_COUNT=${#OUTPUTS[@]}
-echo "📡 将推流到 $OUTPUT_COUNT 个 RTMP 地址"
+
+echo "📡 将推流到 $URL_COUNT 个 RTMP 地址"
 
 while true; do
     video="${VIDEO_LIST[$index]}"

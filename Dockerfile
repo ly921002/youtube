@@ -11,7 +11,7 @@ COPY youtube.sh /app/youtube.sh
 RUN chmod +x /app/youtube.sh
 
 # 默认环境变量（可被外部覆盖）
-ENV RTMP_URL=""
+ENV MULTI_RTMP_URLS=""
 ENV VIDEO_DIR="/videos"
 ENV WATERMARK="no"
 ENV WATERMARK_IMG=""

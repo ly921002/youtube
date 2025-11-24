@@ -46,6 +46,7 @@ if [[ "$WATERMARK" = "yes" ]]; then
     USE_WATERMARK=true
 else
     USE_WATERMARK=false
+    echo "❌ 水印未启用"
 fi
 
 echo "推流地址 (多路): $MULTI_RTMP_URLS"
@@ -212,48 +213,51 @@ while true; do
 
     echo "▶️ 开始推流（日志已打开）..."
 
-    if $USE_WATERMARK; then
-        # 场景 A: 有水印
-        FILTER_COMPLEX=""
-        if [[ -n "$TEXT_FILTER" ]]; then
-            # 水印 + 文字：先 overlay 得到 [bg]，再在 [bg] 上 drawtext
-            FILTER_COMPLEX="[0:v][1:v]overlay=10:10[bg];[bg]${TEXT_FILTER}"
-        else
-            # 仅水印
-            FILTER_COMPLEX="overlay=10:10"
-        fi
-
-        ffmpeg -loglevel verbose \
-            -re -thread_queue_size 1024 -i "$video" \
-            -i "$WATERMARK_IMG" \
-            -filter_complex "$FILTER_COMPLEX" \
-            -c:v libx264 -preset superfast -tune zerolatency \
-            -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
-            -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
-            -c:a aac -b:a 160k \
-            "${OUTPUTS[@]}" # <-- 已修改为多路输出
-
+    # 判定是否可以使用 Copy 模式 (无水印 且 无文字 且 强制开启COPY模式或者自动判断)
+    # 这里我们简单判定：如果没开启水印和文字，就尝试直接复制
+    if [[ "$USE_WATERMARK" == "false" && -z "$TEXT_FILTER" ]]; then
+        echo "🚀 [低功耗模式] 无水印/文字，尝试直接复制流 (Copy Stream)..."
+        
+        # 使用 -c:v copy 和 -c:a copy
+        # 注意：如果源视频编码不兼容 RTMP (如 H.265)，这步会失败，需要回退到转码
+        ffmpeg -loglevel warning \
+            -re -i "$video" \
+            -c:v copy -c:a copy \
+            "${OUTPUTS[@]}"
+            
     else
-        # 场景 B: 无水印
-        if [[ -n "$TEXT_FILTER" ]]; then
-            # 无水印 + 有文字 (使用 -vf)
-            ffmpeg -loglevel verbose \
-                -re -thread_queue_size 1024 -i "$video" \
-                -vf "$TEXT_FILTER" \
-                -c:v libx264 -preset superfast -tune zerolatency \
+        # 需要转码 (由于有水印或文字，或者源格式不支持)
+        
+        FILTER_COMPLEX=""
+        
+        if [[ "$USE_WATERMARK" == "true" ]]; then
+             if [[ -n "$TEXT_FILTER" ]]; then
+                FILTER_COMPLEX="[0:v][1:v]overlay=10:10[bg];[bg]${TEXT_FILTER}"
+             else
+                FILTER_COMPLEX="overlay=10:10"
+             fi
+             echo "🚀 [转码模式] 有水印/文字..."
+             ffmpeg -loglevel error \
+                -re -thread_queue_size 512 -i "$video" \
+                -i "$WATERMARK_IMG" \
+                -filter_complex "$FILTER_COMPLEX" \
+                -c:v libx264 -preset ultrafast -tune zerolatency \
                 -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
                 -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
-                -c:a aac -b:a 160k \
-                "${OUTPUTS[@]}" # <-- 已修改为多路输出
+                -c:a aac -b:a 128k \
+                "${OUTPUTS[@]}"
+                
         else
-            # 场景 C: 无水印 + 无文字 (原样推流，效率最高)
-            ffmpeg -loglevel verbose \
-                -re -thread_queue_size 1024 -i "$video" \
-                -c:v libx264 -preset superfast -tune zerolatency \
+             # 无水印 + 有文字
+             echo "🚀 [转码模式] 无水印 + 有文字..."
+             ffmpeg -loglevel error \
+                -re -thread_queue_size 512 -i "$video" \
+                -vf "$TEXT_FILTER" \
+                -c:v libx264 -preset ultrafast -tune zerolatency \
                 -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
                 -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
-                -c:a aac -b:a 160k \
-                "${OUTPUTS[@]}" # <-- 已修改为多路输出
+                -c:a aac -b:a 128k \
+                "${OUTPUTS[@]}"
         fi
     fi
 

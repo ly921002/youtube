@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "===== FFmpeg 自动推流（顺序循环播放 + 智能码率）====="
+echo "===== FFmpeg 自动推流（顺序循环播放 + 智能码率 + 多路输出）====="
 
 # ---------------------------
 # 环境变量
 # ---------------------------
-RTMP_URL="${RTMP_URL:?必须设置 RTMP_URL，例如 rtmp://xxx/live}"
+# MULTI_RTMP_URLS 必须设置，例如 rtmp://server1/live rtmp://server2/live
+MULTI_RTMP_URLS="${MULTI_RTMP_URLS:?必须设置 MULTI_RTMP_URLS，多个地址用空格分隔}"
 VIDEO_DIR="${VIDEO_DIR:-/videos}"
 
 WATERMARK="${WATERMARK:-no}"
@@ -47,7 +48,7 @@ else
     USE_WATERMARK=false
 fi
 
-echo "推流地址: $RTMP_URL"
+echo "推流地址 (多路): $MULTI_RTMP_URLS"
 echo "视频目录: $VIDEO_DIR"
 echo "水印: $WATERMARK"
 echo "VPS 最大上传带宽: $MAX_UPLOAD"
@@ -161,6 +162,14 @@ echo "📁 找到 $TOTAL 个视频"
 
 index=0
 
+# 构建多路输出参数 (只需构建一次)
+OUTPUTS=()
+for url in $MULTI_RTMP_URLS; do
+    OUTPUTS+=("-f" "flv" "$url")
+done
+OUTPUT_COUNT=${#OUTPUTS[@]}
+echo "📡 将推流到 $OUTPUT_COUNT 个 RTMP 地址"
+
 while true; do
     video="${VIDEO_LIST[$index]}"
     base=$(basename "$video")
@@ -224,7 +233,7 @@ while true; do
             -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
             -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
             -c:a aac -b:a 160k \
-            -f flv "$RTMP_URL"
+            "${OUTPUTS[@]}" # <-- 已修改为多路输出
 
     else
         # 场景 B: 无水印
@@ -237,16 +246,16 @@ while true; do
                 -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
                 -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
                 -c:a aac -b:a 160k \
-                -f flv "$RTMP_URL"
+                "${OUTPUTS[@]}" # <-- 已修改为多路输出
         else
-            # 无水印 + 无文字 (原样推流，效率最高)
+            # 场景 C: 无水印 + 无文字 (原样推流，效率最高)
             ffmpeg -loglevel verbose \
                 -re -i "$video" \
                 -c:v libx264 -preset superfast -tune zerolatency \
                 -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
                 -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
                 -c:a aac -b:a 160k \
-                -f flv "$RTMP_URL"
+                "${OUTPUTS[@]}" # <-- 已修改为多路输出
         fi
     fi
 

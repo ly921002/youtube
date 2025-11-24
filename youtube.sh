@@ -24,7 +24,7 @@ SLEEP_SECONDS="${SLEEP_SECONDS:-10}"
 
 VIDEO_EXTENSIONS="${VIDEO_EXTENSIONS:-mp4,avi,mkv,mov,flv,wmv,webm}"
 # 是否在画面显示文件名 (yes/no)
-SHOW_FILENAME="${SHOW_FILENAME:-yes}"
+SHOW_FILENAME="${SHOW_FILENAME:-no}"
 # 字体路径 (如果 VPS 是最小化安装，可能需要安装 ttf-dejavu 或指定字体文件路径)
 # 如果留空，FFmpeg 会尝试使用系统默认字体
 FONT_FILE="${FONT_FILE:-}"

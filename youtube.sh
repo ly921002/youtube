@@ -228,7 +228,7 @@ while true; do
         fi
 
         ffmpeg -loglevel verbose \
-            -re -i "$video" \
+            -re -thread_queue_size 1024 -i "$video" \
             -i "$WATERMARK_IMG" \
             -filter_complex "$FILTER_COMPLEX" \
             -c:v libx264 -preset superfast -tune zerolatency \
@@ -242,7 +242,7 @@ while true; do
         if [[ -n "$TEXT_FILTER" ]]; then
             # 无水印 + 有文字 (使用 -vf)
             ffmpeg -loglevel verbose \
-                -re -i "$video" \
+                -re -thread_queue_size 1024 -i "$video" \
                 -vf "$TEXT_FILTER" \
                 -c:v libx264 -preset superfast -tune zerolatency \
                 -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
@@ -252,7 +252,7 @@ while true; do
         else
             # 场景 C: 无水印 + 无文字 (原样推流，效率最高)
             ffmpeg -loglevel verbose \
-                -re -i "$video" \
+                -re -thread_queue_size 1024 -i "$video" \
                 -c:v libx264 -preset superfast -tune zerolatency \
                 -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
                 -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \

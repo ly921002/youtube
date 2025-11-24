@@ -238,10 +238,10 @@ while true; do
              fi
              echo "🚀 [转码模式] 有水印/文字..."
              ffmpeg -loglevel error \
-                -re -thread_queue_size 512 -i "$video" \
+                -re -thread_queue_size 1024 -i "$video" \
                 -i "$WATERMARK_IMG" \
                 -filter_complex "$FILTER_COMPLEX" \
-                -c:v libx264 -preset ultrafast -tune zerolatency \
+                -c:v libx264 -preset superfast -tune zerolatency \
                 -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
                 -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
                 -c:a aac -b:a 128k \
@@ -251,9 +251,9 @@ while true; do
              # 无水印 + 有文字
              echo "🚀 [转码模式] 无水印 + 有文字..."
              ffmpeg -loglevel error \
-                -re -thread_queue_size 512 -i "$video" \
+                -re -thread_queue_size 1024 -i "$video" \
                 -vf "$TEXT_FILTER" \
-                -c:v libx264 -preset ultrafast -tune zerolatency \
+                -c:v libx264 -preset superfast -tune zerolatency \
                 -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
                 -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
                 -c:a aac -b:a 128k \

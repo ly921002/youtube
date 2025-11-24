@@ -223,7 +223,17 @@ while true; do
         ffmpeg -loglevel warning \
             -re -i "$video" \
             -c:v copy -c:a copy \
-            "${OUTPUTS[@]}"
+            "${OUTPUTS[@]}" || {
+            echo "❗ Copy 模式失败，自动切换到转码模式…"
+
+            ffmpeg -loglevel error \
+                -re -thread_queue_size 1024 -i "$video" \
+                -c:v libx264 -preset superfast -tune zerolatency \
+                -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
+                -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
+                -c:a aac -b:a 128k \
+                "${OUTPUTS[@]}"
+        }
             
     else
         # 需要转码 (由于有水印或文字，或者源格式不支持)

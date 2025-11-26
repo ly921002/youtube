@@ -1,285 +1,177 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "===== FFmpeg 自动推流（顺序循环播放 + 智能码率 + 多路输出）====="
+echo "=== Ultra FFmpeg Auto Stream v2 ==="
 
-# ---------------------------
+# -------------------------
 # 环境变量
-# ---------------------------
-# MULTI_RTMP_URLS 必须设置，例如 rtmp://server1/live rtmp://server2/live
-MULTI_RTMP_URLS="${MULTI_RTMP_URLS:?必须设置 MULTI_RTMP_URLS，多个地址用空格分隔}"
+# -------------------------
+MULTI_RTMP_URLS="${MULTI_RTMP_URLS:?需要设置 MULTI_RTMP_URLS（空格分隔）}"
 VIDEO_DIR="${VIDEO_DIR:-/videos}"
-
-WATERMARK="${WATERMARK:-no}"
-WATERMARK_IMG="${WATERMARK_IMG:-}"
 
 TARGET_FPS="${TARGET_FPS:-30}"
 KEYFRAME_INTERVAL_SECONDS="${KEYFRAME_INTERVAL_SECONDS:-2}"
-
-# VPS 最大可用上传带宽限制（例如 VPS 上行 10Mbps）
-# 可在 Docker 启动时 -e MAX_UPLOAD="8000k" 覆盖
 MAX_UPLOAD="${MAX_UPLOAD:-10000k}"
 
-SLEEP_SECONDS="${SLEEP_SECONDS:-10}"
-
-VIDEO_EXTENSIONS="${VIDEO_EXTENSIONS:-mp4,avi,mkv,mov,flv,wmv,webm}"
-# 是否在画面显示文件名 (yes/no)
 SHOW_FILENAME="${SHOW_FILENAME:-no}"
-# 字体路径 (如果 VPS 是最小化安装，可能需要安装 ttf-dejavu 或指定字体文件路径)
-# 如果留空，FFmpeg 会尝试使用系统默认字体
+WATERMARK="${WATERMARK:-no}"
+WATERMARK_IMG="${WATERMARK_IMG:-}"
 FONT_FILE="${FONT_FILE:-}"
 
+VIDEO_EXTENSIONS="${VIDEO_EXTENSIONS:-mp4,avi,mkv,mov,flv,wmv,webm}"
+SLEEP_SECONDS="${SLEEP_SECONDS:-8}"
 
-# ---------------------------
-# 基础检查
-# ---------------------------
-if [[ ! -d "$VIDEO_DIR" ]]; then
-    echo "❌ 视频目录不存在：$VIDEO_DIR"
-    exit 1
-fi
+# -------------------------
+# 工具函数
+# -------------------------
 
-if [[ "$WATERMARK" = "yes" ]]; then
-    if [[ ! -f "$WATERMARK_IMG" ]]; then
-        echo "❌ 水印启用，但未找到图片：$WATERMARK_IMG"
-        exit 1
-    fi
-    USE_WATERMARK=true
-else
-    USE_WATERMARK=false
-    echo "❌ 水印未启用"
-fi
+log() { echo "[$(date '+%H:%M:%S')] $*"; }
 
-echo "推流地址 (多路): $MULTI_RTMP_URLS"
-echo "视频目录: $VIDEO_DIR"
-echo "水印: $WATERMARK"
-echo "VPS 最大上传带宽: $MAX_UPLOAD"
-echo "========================================="
-
-# ---------------------------
-# 按数字前缀排序
-# ---------------------------
 sort_videos() {
-    local files=("$@")
-    local out=()
-
-    while IFS= read -r line; do
-        out+=("$line")
-    done < <(
-        for f in "${files[@]}"; do
-            local base=$(basename "$f")
-            local prefix=999999
-
-            # 提取文件名前面的数字
-            if   [[ "$base" =~ ^([0-9]+)[-_\.] ]]; then prefix="${BASH_REMATCH[1]}"
-            elif [[ "$base" =~ ^([0-9]+)       ]]; then prefix="${BASH_REMATCH[1]}"
-            fi
-
-            # 【核心修复点】
-            # $((10#...)) 语法强制 bash 使用 10 进制解析数字
-            # 这样 '08' 就会被解析为数字 8，而不是错误的八进制
-            prefix=$((10#$prefix))
-
-            printf "%06d\t%s\n" "$prefix" "$f"
-        done | sort -n -k1,1 | cut -f2-
-    )
-
-    printf '%s\n' "${out[@]}"
+    awk '
+        {
+            file=$0;
+            n=999999;
+            if (match(file, /^([0-9]+)/, a)) n=a[1];
+            printf "%06d\t%s\n", n, file;
+        }
+    ' | sort -n -k1,1 | cut -f2-
 }
 
-# ---------------------------
-# 扫描视频
-# ---------------------------
-load_video_list() {
-    local exts
-    IFS=',' read -ra exts <<< "$VIDEO_EXTENSIONS"
-
-    local args=()
-    for ext in "${exts[@]}"; do
-        args+=(-iname "*.${ext,,}")
-        args+=(-o)
+load_videos() {
+    IFS=',' read -ra exts <<<"$VIDEO_EXTENSIONS"
+    find_args=()
+    for e in "${exts[@]}"; do
+        find_args+=(-iname "*.${e,,}" -o)
     done
-    unset 'args[${#args[@]}-1]'
+    unset 'find_args[${#find_args[@]}-1]'
 
-    local raw=()
-    while IFS= read -r -d '' f; do raw+=("$f"); done < <(find "$VIDEO_DIR" -maxdepth 1 -type f \( "${args[@]}" \) -print0)
+    mapfile -t raw < <(find "$VIDEO_DIR" -maxdepth 1 -type f \( "${find_args[@]}" \))
 
-    if [[ ${#raw[@]} -eq 0 ]]; then
-        echo "❌ 未找到视频"
-        exit 1
-    fi
+    [[ ${#raw[@]} -eq 0 ]] && { log "❌ 未找到视频"; exit 1; }
 
-    local valid=()
+    # 只保留有视频轨道的文件
+    valid=()
     for f in "${raw[@]}"; do
         if ffprobe -v error -select_streams v:0 -show_entries stream=codec_type \
-            -of default=nw=1:nk=1 "$f" 2>/dev/null | grep -q video; then
+            -of csv=p=0 "$f" 2>/dev/null | grep -q video; then
             valid+=("$f")
         fi
     done
 
-    mapfile -t VIDEO_LIST < <(sort_videos "${valid[@]}")
+    mapfile -t VIDEO_LIST < <(printf "%s\n" "${valid[@]}" | sort_videos)
 }
 
-# ---------------------------
-# 自动码率策略（含 VPS 限速）
-# ---------------------------
 choose_bitrate() {
-    local width="$1" height="$2"
+    local h="$1"
+    local v="3000k" m="3500k" b="6000k"
+    (( h >= 2160 )) && v="14000k" m="15000k" b="20000k"
+    (( h >= 1440 && h < 2160 )) && v="9000k" m="10000k" b="16000k"
+    (( h >= 1080 && h < 1440 )) && v="5500k" m="6000k" b="9000k"
 
-    # 默认 720p
-    local v_b="3000k"   # 视频码率
-    local maxr="3500k"  # 最大码率
-    local buf="6000k"
+    upl="${MAX_UPLOAD%k}"
+    [[ ${v%k} -gt $upl ]] && v="${upl}k"
+    [[ ${m%k} -gt $upl ]] && m="${upl}k"
 
-    if   (( height >= 2160 )); then  # 4K
-        v_b="14000k"; maxr="15000k"; buf="20000k"
-    elif (( height >= 1440 )); then  # 2K
-        v_b="9000k"; maxr="10000k"; buf="16000k"
-    elif (( height >= 1080 )); then  # 1080p
-        v_b="5500k"; maxr="6000k"; buf="9000k"
-    elif (( height >= 720 )); then   # 720p
-        v_b="3000k"; maxr="3500k"; buf="6000k"
-    fi
-
-    # VPS 限速（取最小值）
-    local v_bps=${v_b%k}
-    local maxr_bps=${maxr%k}
-    local upl_bps=${MAX_UPLOAD%k}
-
-    if (( v_bps > upl_bps )); then v_b="${upl_bps}k"; fi
-    if (( maxr_bps > upl_bps )); then maxr="${upl_bps}k"; fi
-
-    VIDEO_BITRATE="$v_b"
-    MAXRATE="$maxr"
-    VIDEO_BUFSIZE="$buf"
+    VIDEO_BITRATE="$v"
+    MAXRATE="$m"
+    VIDEO_BUFSIZE="$b"
 }
 
-# ---------------------------
-# 主流程
-# ---------------------------
-echo "🔍 扫描视频..."
-load_video_list
-TOTAL=${#VIDEO_LIST[@]}
-echo "📁 找到 $TOTAL 个视频"
+# 提前判断是否可 COPY
+is_copy_compatible() {
+    codec=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name \
+        -of csv=p=0 "$1")
+    [[ "$codec" == "h264" ]]
+}
 
-index=0
-
-# 构建多路输出参数 (只需构建一次)
+# -------------------------
+# 多路 RTMP 输出构建
+# -------------------------
 OUTPUTS=()
-for url in $MULTI_RTMP_URLS; do
-    OUTPUTS+=("-f" "flv" "$url")
+for u in $MULTI_RTMP_URLS; do
+    OUTPUTS+=(-f flv "$u")
 done
 
+# -------------------------
+# 主流程
+# -------------------------
+log "📁 扫描视频..."
+load_videos
+TOTAL=${#VIDEO_LIST[@]}
+log "找到 $TOTAL 个视频"
+
+idx=0
+GOP=$((TARGET_FPS * KEYFRAME_INTERVAL_SECONDS))
+
 while true; do
-    video="${VIDEO_LIST[$index]}"
-    base=$(basename "$video")
+    v="${VIDEO_LIST[$idx]}"
+    base=$(basename "$v")
+    log "▶️ 播放 ($((idx+1))/$TOTAL) $base"
 
-    echo ""
-    echo "🎬 播放第 $((index+1))/$TOTAL 个视频：$base"
+    # 分辨率
+    read WIDTH HEIGHT < <(ffprobe -v error -select_streams v:0 \
+        -show_entries stream=width,height -of csv=p=0 "$v")
+    choose_bitrate "$HEIGHT"
 
-    # 解析视频分辨率
-    res=$(ffprobe -v error -select_streams v:0 \
-        -show_entries stream=width,height \
-        -of csv=p=0 "$video")
-    
-    WIDTH=$(echo "$res" | cut -d',' -f1)
-    HEIGHT=$(echo "$res" | cut -d',' -f2)
+    # 音频检测
+    has_audio=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_type \
+        -of csv=p=0 "$v" || true)
+    AUDIO_ARGS=()
+    [[ -n "$has_audio" ]] && AUDIO_ARGS=(-c:a aac -b:a 128k) || AUDIO_ARGS=(-an)
 
-    echo "分辨率：${WIDTH}x${HEIGHT}"
-
-    # 自动选择码率
-    choose_bitrate "$WIDTH" "$HEIGHT"
-
-    echo "自动码率：VIDEO=$VIDEO_BITRATE  MAXRATE=$MAXRATE  BUF=$VIDEO_BUFSIZE"
-
-    GOP=$((TARGET_FPS * KEYFRAME_INTERVAL_SECONDS))
-
-    # ==========================================
-    # [新增] 构建文字滤镜 (drawtext)
-    # ==========================================
-    TEXT_FILTER=""
+    # 文字滤镜
+    TEXT=""
     if [[ "$SHOW_FILENAME" == "yes" ]]; then
-        # 1. 对文件名进行转义，防止 FFmpeg 滤镜解析错误 (处理冒号和单引号)
-        safe_name=$(echo "$base" | sed "s/:/\\\\\\\\:/g" | sed "s/'/\\\\\\\\'/g")
-        
-        # 2. 构建滤镜字符串
-        # x=10:y=h-th-10 (左下角), fontsize=24, fontcolor=white, 黑色半透明背景框
-        TEXT_FILTER="drawtext=text='$safe_name':fontcolor=white:fontsize=24:x=10:y=h-th-10:box=1:boxcolor=black@0.5:boxborderw=5"
-        
-        # 如果指定了字体文件，加入 fontfile 参数
-        if [[ -n "$FONT_FILE" && -f "$FONT_FILE" ]]; then
-             TEXT_FILTER="drawtext=fontfile='$FONT_FILE':text='$safe_name':fontcolor=white:fontsize=24:x=10:y=h-th-10:box=1:boxcolor=black@0.5:boxborderw=5"
-        fi
+        safe=$(echo "$base" | sed "s/'/\\\\'/g;s/:/\\\\:/g")
+        font_arg=""
+        [[ -f "$FONT_FILE" ]] && font_arg="fontfile='$FONT_FILE':"
+        TEXT="drawtext=${font_arg}text='$safe':fontcolor=white:fontsize=24:x=10:y=h-th-10:box=1:boxcolor=black@0.5"
     fi
 
-    echo "▶️ 开始推流（日志已打开）..."
-
-    # 判定是否可以使用 Copy 模式 (无水印 且 无文字 且 强制开启COPY模式或者自动判断)
-    # 这里我们简单判定：如果没开启水印和文字，就尝试直接复制
-    if [[ "$USE_WATERMARK" == "false" && -z "$TEXT_FILTER" ]]; then
-        echo "🚀 [低功耗模式] 无水印/文字，尝试直接复制流 (Copy Stream)..."
-        
-        # 使用 -c:v copy 和 -c:a copy
-        # 注意：如果源视频编码不兼容 RTMP (如 H.265)，这步会失败，需要回退到转码
-        ffmpeg -loglevel warning \
-            -re -i "$video" \
-            -c:v copy -c:a copy \
-            "${OUTPUTS[@]}" || {
-            echo "❗ Copy 模式失败，自动切换到转码模式…"
-
-            ffmpeg -loglevel error \
-                -re -thread_queue_size 1024 -i "$video" \
-                -c:v libx264 -preset superfast -tune zerolatency \
-                -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
-                -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
-                -c:a aac -b:a 128k \
-                "${OUTPUTS[@]}"
-        }
-            
-    else
-        # 需要转码 (由于有水印或文字，或者源格式不支持)
-        
-        FILTER_COMPLEX=""
-        
-        if [[ "$USE_WATERMARK" == "true" ]]; then
-             if [[ -n "$TEXT_FILTER" ]]; then
-                FILTER_COMPLEX="[0:v][1:v]overlay=10:10[bg];[bg]${TEXT_FILTER}"
-             else
-                FILTER_COMPLEX="overlay=10:10"
-             fi
-             echo "🚀 [转码模式] 有水印/文字..."
-             ffmpeg -loglevel error \
-                -re -thread_queue_size 1024 -i "$video" \
-                -i "$WATERMARK_IMG" \
-                -filter_complex "$FILTER_COMPLEX" \
-                -c:v libx264 -preset superfast -tune zerolatency \
-                -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
-                -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
-                -c:a aac -b:a 128k \
-                "${OUTPUTS[@]}"
-                
+    # 构建 filter
+    FILTER=""
+    if [[ "$WATERMARK" == "yes" && -f "$WATERMARK_IMG" ]]; then
+        if [[ -n "$TEXT" ]]; then
+            FILTER="[0:v][1:v]overlay=10:10,${TEXT}"
+            INPUTS=(-i "$v" -i "$WATERMARK_IMG")
         else
-             # 无水印 + 有文字
-             echo "🚀 [转码模式] 无水印 + 有文字..."
-             ffmpeg -loglevel error \
-                -re -thread_queue_size 1024 -i "$video" \
-                -vf "$TEXT_FILTER" \
-                -c:v libx264 -preset superfast -tune zerolatency \
-                -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
-                -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS" \
-                -c:a aac -b:a 128k \
-                "${OUTPUTS[@]}"
+            FILTER="overlay=10:10"
+            INPUTS=(-i "$v" -i "$WATERMARK_IMG")
+        fi
+    else
+        [[ -n "$TEXT" ]] && FILTER="$TEXT"
+        INPUTS=(-i "$v")
+    fi
+
+    COMMON=(
+        -preset superfast -tune zerolatency
+        -b:v "$VIDEO_BITRATE" -maxrate "$MAXRATE" -bufsize "$VIDEO_BUFSIZE"
+        -g "$GOP" -keyint_min "$GOP" -r "$TARGET_FPS"
+        "${AUDIO_ARGS[@]}"
+    )
+
+    # COPY 优先
+    if [[ -z "$FILTER" && "$WATERMARK" == "no" && "$SHOW_FILENAME" == "no" && $(is_copy_compatible "$v" && echo "yes") == "yes" ]]; then
+        log "🚀 COPY 模式"
+        ffmpeg -loglevel warning -re -i "$v" -c:v copy -c:a copy "${OUTPUTS[@]}" || {
+            log "⚠️ COPY 失败 → 转码"
+            ffmpeg -loglevel error -re "${INPUTS[@]}" -c:v libx264 -vf "$FILTER" "${COMMON[@]}" \
+                "${OUTPUTS[@]}" || log "❌ 推流失败"
+        }
+    else
+        log "🚀 转码模式"
+        if [[ -n "$FILTER" ]]; then
+            ffmpeg -loglevel error -re "${INPUTS[@]}" -filter_complex "$FILTER" \
+                -c:v libx264 "${COMMON[@]}" "${OUTPUTS[@]}" || log "❌ 推流失败"
+        else
+            ffmpeg -loglevel error -re "${INPUTS[@]}" -c:v libx264 \
+                "${COMMON[@]}" "${OUTPUTS[@]}" || log "❌ 推流失败"
         fi
     fi
 
-    echo "⏳ 等待 $SLEEP_SECONDS 秒..."
     sleep "$SLEEP_SECONDS"
 
-    # 下一条
-    index=$(( (index + 1) % TOTAL ))
-
-    if [[ $index -eq 0 ]]; then
-        echo "🔄 再次扫描目录（检查新视频）..."
-        load_video_list
-        TOTAL=${#VIDEO_LIST[@]}
-    fi
+    idx=$(( (idx + 1) % TOTAL ))
+    [[ $idx -eq 0 ]] && load_videos && TOTAL=${#VIDEO_LIST[@]}
 done

@@ -1,0 +1,27 @@
+version: '3'
+
+services:
+  ffmpegstream:
+    image: ly920907/ffmpeg-autostream:latest
+    container_name: ffmpeg-streamer
+    restart: always
+    
+    # 低延迟 RTMP：推荐 host network（Linux Only）
+    network_mode: host
+    
+    environment:
+      MULTI_RTMP_URLS: "rtmp://a.rtmp.youtube.com/live2/直播码"
+      FONT_FILE: "/usr/share/fonts/noto/NotoSansCJK-Regular.ttc" 
+      SLEEP_SECONDS: "5" 
+      SHOW_FILENAME: "no" #默认copy模式，yes开启转码模式，显示当前播放文件名
+      WATERMARK: "no" #默认copy模式，yes开启转码模式，显示水印
+      WATERMARK_IMG: "" #水印路径
+    volumes:
+      - /home/ubuntu/videos:/videos
+
+    # 限制 docker logs（否则 FFmpeg 会刷爆日志）
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

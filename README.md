@@ -21,13 +21,17 @@
 启动服务：
 
 bash
+
 docker compose up -d
 
 ## 📂 文件结构
 
 /home/ubuntu/videos/ # 主机视频目录
+
 ├── 01.mp4
+
 ├── 02.mp4
+
 └── 03.mp4
 
 容器内映射路径：`/videos`
@@ -58,9 +62,6 @@ docker compose up -d
 - 低延迟 zerolatency 推流
 - Docker 自动重启机制
 
-## 🤝 贡献
-
-欢迎提交 Issue 和 PR！如有需求（随机播放、远程管理、HLS 输出等），可在 Issue 中提出。
 
 ## 📜 许可证
 

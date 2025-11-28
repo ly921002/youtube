@@ -3,6 +3,11 @@ name: Build and Push Docker Image (Multi-Arch)
 on:
   push:
     branches: ["main"]
+    paths:
+      - 'Dockerfile'
+      - 'youtube.sh'
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:

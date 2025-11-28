@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "=== Ultra FFmpeg Auto Stream v2 ==="
+echo "=== Ultra FFmpeg Auto Stream v1 ==="
 
 # -------------------------
 # 环境变量

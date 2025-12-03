@@ -10,8 +10,12 @@ RUN apk add --no-cache \
         fontconfig \
         font-noto-cjk \
         python3 \
-        py3-pip \
-        yt-dlp
+        py3-pip
+
+        # 安装最新 yt-dlp（强烈推荐）
+RUN wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+    -O /usr/local/bin/yt-dlp && \
+    chmod +x /usr/local/bin/yt-dlp
 
 
 WORKDIR /app

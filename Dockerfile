@@ -1,8 +1,11 @@
 FROM alpine:3.19
 
-# 安装 ffmpeg（Alpine 的 ffmpeg 包含 ffprobe）
-RUN apk add --no-cache ffmpeg bash coreutils findutils ttf-dejavu fontconfig
-RUN apk add --no-cache font-noto-cjk
+# 安装 ffmpeg、字体、bash 等
+RUN apk add --no-cache ffmpeg bash coreutils findutils ttf-dejavu fontconfig font-noto-cjk
+
+# 安装 yt-dlp（用于解析 YouTube / 网络视频）
+RUN apk add --no-cache python3 py3-pip && pip install --no-cache-dir yt-dlp
+
 
 WORKDIR /app
 

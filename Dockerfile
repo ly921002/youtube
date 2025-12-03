@@ -1,10 +1,17 @@
 FROM alpine:3.19
 
-# 安装 ffmpeg、字体、bash 等
-RUN apk add --no-cache ffmpeg bash coreutils findutils ttf-dejavu fontconfig font-noto-cjk
-
-# 安装 yt-dlp（用于解析 YouTube / 网络视频）
-RUN apk add --no-cache python3 py3-pip && pip install --no-cache-dir yt-dlp
+# ffmpeg + 字体 + python3 + yt-dlp 全部一次装好
+RUN apk add --no-cache \
+        ffmpeg \
+        bash \
+        coreutils \
+        findutils \
+        ttf-dejavu \
+        fontconfig \
+        font-noto-cjk \
+        python3 \
+        py3-pip \
+        yt-dlp
 
 
 WORKDIR /app

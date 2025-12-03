@@ -1,16 +1,20 @@
 FROM alpine:3.19
 
 # ffmpeg + 字体 + python3 + yt-dlp 全部一次装好
+# 基础依赖
 RUN apk add --no-cache \
-        ffmpeg \
-        bash \
-        coreutils \
-        findutils \
-        ttf-dejavu \
-        fontconfig \
-        font-noto-cjk \
-        python3 \
-        py3-pip
+    ffmpeg \
+    bash \
+    coreutils \
+    findutils \
+    wget \
+    ttf-dejavu \
+    fontconfig \
+    font-noto-cjk \
+    python3 \
+    py3-pip \
+    nodejs \
+    npm
 
         # 安装最新 yt-dlp（强烈推荐）
 RUN wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \

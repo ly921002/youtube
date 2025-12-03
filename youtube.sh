@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "=== Ultra FFmpeg Mixed Stream v2 ==="
+echo "=== Ultra FFmpeg Auto Stream v1 ==="
 
 # -------------------------
 # 环境变量
@@ -19,90 +19,74 @@ WATERMARK_IMG="${WATERMARK_IMG:-}"
 FONT_FILE="${FONT_FILE:-}"
 
 VIDEO_EXTENSIONS="${VIDEO_EXTENSIONS:-mp4,avi,mkv,mov,flv,wmv,webm}"
-SLEEP_SECONDS="${SLEEP_SECONDS:-5}"
+SLEEP_SECONDS="${SLEEP_SECONDS:-8}"
 
 # -------------------------
+# 工具函数
+# -------------------------
+
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
 
+sort_videos() {
+    awk '
+        {
+            file=$0;
+            n=999999;
+            if (match(file, /^([0-9]+)/, a)) n=a[1];
+            printf "%06d\t%s\n", n, file;
+        }
+    ' | sort -n -k1,1 | cut -f2-
+}
+
+load_videos() {
+    IFS=',' read -ra exts <<<"$VIDEO_EXTENSIONS"
+    find_args=()
+    for e in "${exts[@]}"; do
+        find_args+=(-iname "*.${e,,}" -o)
+    done
+    unset 'find_args[${#find_args[@]}-1]'
+
+    mapfile -t raw < <(find "$VIDEO_DIR" -maxdepth 1 -type f \( "${find_args[@]}" \))
+
+    [[ ${#raw[@]} -eq 0 ]] && { log "❌ 未找到视频"; exit 1; }
+
+    # 只保留有视频轨道的文件
+    valid=()
+    for f in "${raw[@]}"; do
+        if ffprobe -v error -select_streams v:0 -show_entries stream=codec_type \
+            -of csv=p=0 "$f" 2>/dev/null | grep -q video; then
+            valid+=("$f")
+        fi
+    done
+
+    mapfile -t VIDEO_LIST < <(printf "%s\n" "${valid[@]}" | sort_videos)
+}
+
+choose_bitrate() {
+    local h="$1"
+    local v="3000k" m="3500k" b="6000k"
+    (( h >= 2160 )) && v="14000k" m="15000k" b="20000k"
+    (( h >= 1440 && h < 2160 )) && v="9000k" m="10000k" b="16000k"
+    (( h >= 1080 && h < 1440 )) && v="5500k" m="6000k" b="9000k"
+
+    upl="${MAX_UPLOAD%k}"
+    [[ ${v%k} -gt $upl ]] && v="${upl}k"
+    [[ ${m%k} -gt $upl ]] && m="${upl}k"
+
+    VIDEO_BITRATE="$v"
+    MAXRATE="$m"
+    VIDEO_BUFSIZE="$b"
+}
+
+# 提前判断是否可 COPY
 is_copy_compatible() {
-    codec=$(ffprobe -v error -select_streams v:0 \
-        -show_entries stream=codec_name -of csv=p=0 "$1")
+    codec=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name \
+        -of csv=p=0 "$1")
     [[ "$codec" == "h264" ]]
 }
 
-sort_items() {
-    awk '
-        {n=999999; if (match($0,/^([0-9]+)/,a)) n=a[1]; printf "%06d\t%s\n",n,$0;
-    }' | sort -n -k1,1 | cut -f2-
-}
-
 # -------------------------
-# 扫描本地 + YouTube (.url)
-# -------------------------
-load_playlist() {
-    mapfile -t FILES_LOCAL < <(
-        find "$VIDEO_DIR" -maxdepth 1 -type f \
-        \( $(printf -- "-iname '*.%s' -o " ${VIDEO_EXTENSIONS//,/ }) -false \)
-    )
-
-    mapfile -t FILES_URL < <(
-        find "$VIDEO_DIR" -maxdepth 1 -type f -iname "*.url"
-    )
-
-    # 必须至少 1 个视频源
-    if [[ ${#FILES_LOCAL[@]} -eq 0 && ${#FILES_URL[@]} -eq 0 ]]; then
-        log "❌ 未找到视频或 URL 列表"
-        exit 1
-    fi
-
-    # 拼接
-    PLAYLIST=("${FILES_LOCAL[@]}" "${FILES_URL[@]}")
-
-    mapfile -t PLAYLIST < <(printf "%s\n" "${PLAYLIST[@]}" | sort_items)
-
-    log "已加载 ${#PLAYLIST[@]} 个播放项（本地 + URL）"
-}
-
-# -------------------------
-# 获取 URL 真实播放地址
-# -------------------------
-resolve_url() {
-    url_file="$1"
-    URL=$(sed -n '1p' "$url_file")
-
-    if [[ "$URL" =~ ^https?:// ]]; then
-        log "🌐 解析 URL：$URL"
-        REAL_URL=$(yt-dlp --cookies /cookies/cookies.txt \
-        --user-agent "Mozilla/5.0" \
-        -g "$URL")
-
-        echo "$REAL_URL"
-    else
-        log "⚠️ URL 文件内容不合法：$URL"
-        return 1
-    fi
-}
-
-# -------------------------
-# 选择码率
-# -------------------------
-choose_bitrate() {
-    local h="$1"
-    local upl="${MAX_UPLOAD%k}"
-    VIDEO_BITRATE="3000k"
-    MAXRATE="3500k"
-    VIDEO_BUFSIZE="6000k"
-
-    (( h >= 2160 )) && VIDEO_BITRATE="15000k" && MAXRATE="18000k"
-    (( h >= 1440 && h < 2160 )) && VIDEO_BITRATE="9000k" && MAXRATE="12000k"
-    (( h >= 1080 && h < 1440 )) && VIDEO_BITRATE="6000k" && MAXRATE="8000k"
-
-    [[ ${VIDEO_BITRATE%k} -gt $upl ]] && VIDEO_BITRATE="${upl}k"
-    [[ ${MAXRATE%k} -gt $upl ]] && MAXRATE="${upl}k"
-}
-
-# -------------------------
-# 多路推流构造
+# 多路 RTMP 输出构建
 # -------------------------
 OUTPUTS=()
 for u in $MULTI_RTMP_URLS; do
@@ -112,70 +96,53 @@ done
 # -------------------------
 # 主流程
 # -------------------------
-load_playlist
-TOTAL=${#PLAYLIST[@]}
+log "📁 扫描视频..."
+load_videos
+TOTAL=${#VIDEO_LIST[@]}
+log "找到 $TOTAL 个视频"
+
 idx=0
 GOP=$((TARGET_FPS * KEYFRAME_INTERVAL_SECONDS))
 
 while true; do
-    item="${PLAYLIST[$idx]}"
+    v="${VIDEO_LIST[$idx]}"
+    base=$(basename "$v")
+    log "▶️ 播放 ($((idx+1))/$TOTAL) $base"
 
-    if [[ "$item" =~ \.url$ ]]; then
-        log "▶️ 播放 URL 源：$(basename "$item")"
+    # 分辨率
+    read WIDTH HEIGHT < <(ffprobe -v error -select_streams v:0 \
+        -show_entries stream=width,height -of csv=p=0 "$v")
+    choose_bitrate "$HEIGHT"
 
-        REAL=$(resolve_url "$item")
+    # 音频检测
+    has_audio=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_type \
+        -of csv=p=0 "$v" || true)
+    AUDIO_ARGS=()
+    [[ -n "$has_audio" ]] && AUDIO_ARGS=(-c:a aac -b:a 128k) || AUDIO_ARGS=(-an)
 
-        INPUTS=(-i "$REAL")
-        FILTER=""
-        COPY_MODE="no"
-
-        # URL 永远转码（稳定）
-        HAS_AUDIO="yes"
-
-        WIDTH=1920
-        HEIGHT=1080
-        choose_bitrate "$HEIGHT"
-
-    else
-        log "▶️ 播放本地文件：$(basename "$item")"
-
-        INPUTS=(-i "$item")
-
-        read WIDTH HEIGHT < <(ffprobe -v error -select_streams v:0 \
-            -show_entries stream=width,height -of csv=p=0 "$item")
-
-        choose_bitrate "$HEIGHT"
-
-        HAS_AUDIO=$(ffprobe -v error -select_streams a:0 \
-            -show_entries stream=codec_type -of csv=p=0 "$item" || true)
-
-        if is_copy_compatible "$item"; then
-            COPY_MODE="yes"
-        else
-            COPY_MODE="no"
-        fi
-
-        FILTER=""
-    fi
-
-    # 字幕/水印
+    # 文字滤镜
+    TEXT=""
     if [[ "$SHOW_FILENAME" == "yes" ]]; then
-        safe=$(basename "$item")
-        FILTER="drawtext=text='$safe':fontcolor=white:fontsize=24:x=10:y=h-th-10"
+        safe=$(echo "$base" | sed "s/'/\\\\'/g;s/:/\\\\:/g")
+        font_arg=""
+        [[ -f "$FONT_FILE" ]] && font_arg="fontfile='$FONT_FILE':"
+        TEXT="drawtext=${font_arg}text='$safe':fontcolor=white:fontsize=24:x=10:y=h-th-10:box=1:boxcolor=black@0.5"
     fi
 
+    # 构建 filter
+    FILTER=""
     if [[ "$WATERMARK" == "yes" && -f "$WATERMARK_IMG" ]]; then
-        if [[ -n "$FILTER" ]]; then
-            FILTER="[0:v][1:v]overlay=10:10,$FILTER"
-            INPUTS+=(-i "$WATERMARK_IMG")
+        if [[ -n "$TEXT" ]]; then
+            FILTER="[0:v][1:v]overlay=10:10,${TEXT}"
+            INPUTS=(-i "$v" -i "$WATERMARK_IMG")
         else
             FILTER="overlay=10:10"
-            INPUTS+=(-i "$WATERMARK_IMG")
+            INPUTS=(-i "$v" -i "$WATERMARK_IMG")
         fi
+    else
+        [[ -n "$TEXT" ]] && FILTER="$TEXT"
+        INPUTS=(-i "$v")
     fi
-
-    AUDIO_ARGS=()
-    [[ -n "$HAS_AUDIO" ]] && AUDIO_ARGS=(-c:a aac -b:a 128k) || AUDIO_ARGS=(-an)
 
     COMMON=(
         -preset superfast -tune zerolatency
@@ -184,29 +151,27 @@ while true; do
         "${AUDIO_ARGS[@]}"
     )
 
-    # -------------------------
-    # COPY 优先（仅限本地文件）
-    # -------------------------
-    if [[ "$COPY_MODE" == "yes" && -z "$FILTER" && "$item" != *.url ]]; then
+    # COPY 优先
+    if [[ -z "$FILTER" && "$WATERMARK" == "no" && "$SHOW_FILENAME" == "no" && $(is_copy_compatible "$v" && echo "yes") == "yes" ]]; then
         log "🚀 COPY 模式"
-        ffmpeg -loglevel warning -re "${INPUTS[@]}" -c:v copy -c:a copy \
-            "${OUTPUTS[@]}" \
-            || log "COPY 失败 → 转码"
-    fi
-
-    if [[ "$COPY_MODE" == "no" || "$item" == *.url ]]; then
+        ffmpeg -loglevel warning -re -i "$v" -c:v copy -c:a copy "${OUTPUTS[@]}" || {
+            log "⚠️ COPY 失败 → 转码"
+            ffmpeg -loglevel error -re "${INPUTS[@]}" -c:v libx264 -vf "$FILTER" "${COMMON[@]}" \
+                "${OUTPUTS[@]}" || log "❌ 推流失败"
+        }
+    else
         log "🚀 转码模式"
         if [[ -n "$FILTER" ]]; then
             ffmpeg -loglevel error -re "${INPUTS[@]}" -filter_complex "$FILTER" \
-                -c:v libx264 "${COMMON[@]}" "${OUTPUTS[@]}"
+                -c:v libx264 "${COMMON[@]}" "${OUTPUTS[@]}" || log "❌ 推流失败"
         else
             ffmpeg -loglevel error -re "${INPUTS[@]}" -c:v libx264 \
-                "${COMMON[@]}" "${OUTPUTS[@]}"
+                "${COMMON[@]}" "${OUTPUTS[@]}" || log "❌ 推流失败"
         fi
     fi
 
     sleep "$SLEEP_SECONDS"
 
     idx=$(( (idx + 1) % TOTAL ))
-    [[ $idx -eq 0 ]] && load_playlist && TOTAL=${#PLAYLIST[@]}
+    [[ $idx -eq 0 ]] && load_videos && TOTAL=${#VIDEO_LIST[@]}
 done

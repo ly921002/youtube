@@ -72,7 +72,10 @@ resolve_url() {
 
     if [[ "$URL" =~ ^https?:// ]]; then
         log "🌐 解析 URL：$URL"
-        REAL_URL=$(yt-dlp -f "best" -g "$URL")
+        REAL_URL=$(yt-dlp --cookies /cookies/cookies.txt \
+        --user-agent "Mozilla/5.0" \
+        -g "$URL")
+
         echo "$REAL_URL"
     else
         log "⚠️ URL 文件内容不合法：$URL"

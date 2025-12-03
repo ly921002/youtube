@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "=== Ultra FFmpeg Auto Stream v1 ==="
+echo "=== Ultra FFmpeg Auto Stream v1 (字幕增强版) ==="
 
 # -------------------------
 # 环境变量
@@ -19,6 +19,8 @@ WATERMARK_IMG="${WATERMARK_IMG:-}"
 FONT_FILE="${FONT_FILE:-}"
 
 VIDEO_EXTENSIONS="${VIDEO_EXTENSIONS:-mp4,avi,mkv,mov,flv,wmv,webm}"
+SUBTITLE_ENABLE="${SUBTITLE_ENABLE:-no}"
+SUBTITLE_EXTENSIONS="${SUBTITLE_EXTENSIONS:-srt,ass,vtt,ssa}"
 SLEEP_SECONDS="${SLEEP_SECONDS:-8}"
 
 # -------------------------
@@ -48,18 +50,53 @@ load_videos() {
 
     mapfile -t raw < <(find "$VIDEO_DIR" -maxdepth 1 -type f \( "${find_args[@]}" \))
 
-    [[ ${#raw[@]} -eq 0 ]] && { log "❌ 未找到视频"; exit 1; }
+    [[ ${#raw[@]} -eq 0 ]] && { log "❌❌ 未找到视频"; exit 1; }
 
     # 只保留有视频轨道的文件
     valid=()
     for f in "${raw[@]}"; do
         if ffprobe -v error -select_streams v:0 -show_entries stream=codec_type \
-            -of csv=p=0 "$f" 2>/dev/null | grep -q video; then
+            -of csv=p=0 "$v" 2>/dev/null | grep -q video; then
             valid+=("$f")
         fi
     done
 
     mapfile -t VIDEO_LIST < <(printf "%s\n" "${valid[@]}" | sort_videos)
+}
+
+# 查找字幕文件
+find_subtitle() {
+    local video_path="$1"
+    local base_name="${video_path%.*}"
+    
+    IFS=',' read -ra exts <<<"$SUBTITLE_EXTENSIONS"
+    for ext in "${exts[@]}"; do
+        local subtitle_file="${base_name}.${ext}"
+        if [[ -f "$subtitle_file" ]]; then
+            echo "$subtitle_file"
+            log "📝 找到字幕文件: $(basename "$subtitle_file")"
+            return 0
+        fi
+    done
+    
+    # 尝试其他常见字幕文件名模式
+    local dir=$(dirname "$video_path")
+    local name=$(basename "$video_path" | sed 's/\.[^.]*$//')
+    
+    # 查找匹配的字幕文件
+    for sub_ext in "${exts[@]}"; do
+        local potential_subs=("${dir}/${name}.${sub_ext}" "${dir}/${name}.zh.${sub_ext}" "${dir}/${name}.chs.${sub_ext}")
+        for sub_file in "${potential_subs[@]}"; do
+            if [[ -f "$sub_file" && "$sub_file" != "$video_path" ]]; then
+                echo "$sub_file"
+                log "📝 找到字幕文件: $(basename "$sub_file")"
+                return 0
+            fi
+        done
+    done
+    
+    echo ""
+    return 1
 }
 
 choose_bitrate() {
@@ -96,7 +133,7 @@ done
 # -------------------------
 # 主流程
 # -------------------------
-log "📁 扫描视频..."
+log "📁📁 扫描视频..."
 load_videos
 TOTAL=${#VIDEO_LIST[@]}
 log "找到 $TOTAL 个视频"
@@ -120,28 +157,78 @@ while true; do
     AUDIO_ARGS=()
     [[ -n "$has_audio" ]] && AUDIO_ARGS=(-c:a aac -b:a 128k) || AUDIO_ARGS=(-an)
 
+    # 字幕检测和处理
+    SUBTITLE_FILTER=""
+    SUBTITLE_INPUTS=()
+    if [[ "$SUBTITLE_ENABLE" == "yes" ]]; then
+        subtitle_file=$(find_subtitle "$v")
+        if [[ -n "$subtitle_file" ]]; then
+            case "${subtitle_file##*.}" in
+                ass|ssa)
+                    SUBTITLE_FILTER="ass='$subtitle_file'"
+                    ;;
+                srt|vtt)
+                    SUBTITLE_FILTER="subtitles='$subtitle_file':force_style='FontName=Arial,FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=1,Shadow=0'"
+                    ;;
+            esac
+        fi
+    fi
+
     # 文字滤镜
-    TEXT=""
+    TEXT_FILTER=""
     if [[ "$SHOW_FILENAME" == "yes" ]]; then
         safe=$(echo "$base" | sed "s/'/\\\\'/g;s/:/\\\\:/g")
         font_arg=""
         [[ -f "$FONT_FILE" ]] && font_arg="fontfile='$FONT_FILE':"
-        TEXT="drawtext=${font_arg}text='$safe':fontcolor=white:fontsize=24:x=10:y=h-th-10:box=1:boxcolor=black@0.5"
+        TEXT_FILTER="drawtext=${font_arg}text='$safe':fontcolor=white:fontsize=24:x=10:y=h-th-10:box=1:boxcolor=black@0.5"
     fi
 
-    # 构建 filter
-    FILTER=""
+    # 水印滤镜
+    WATERMARK_FILTER=""
+    WATERMARK_INPUTS=()
     if [[ "$WATERMARK" == "yes" && -f "$WATERMARK_IMG" ]]; then
-        if [[ -n "$TEXT" ]]; then
-            FILTER="[0:v][1:v]overlay=10:10,${TEXT}"
-            INPUTS=(-i "$v" -i "$WATERMARK_IMG")
+        WATERMARK_FILTER="[0:v][1:v]overlay=10:10"
+        WATERMARK_INPUTS=(-i "$WATERMARK_IMG")
+    fi
+
+    # 构建滤镜链
+    FILTER_COMPLEX=""
+    INPUTS=(-i "$v")
+    FILTER_COUNT=0
+
+    # 合并所有滤镜
+    FILTER_CHAINS=()
+
+    # 如果有水印，从水印开始
+    if [[ -n "$WATERMARK_FILTER" ]]; then
+        FILTER_CHAINS+=("$WATERMARK_FILTER")
+        INPUTS+=("${WATERMARK_INPUTS[@]}")
+        FILTER_COUNT=1
+    fi
+
+    # 添加文字滤镜
+    if [[ -n "$TEXT_FILTER" ]]; then
+        if [[ $FILTER_COUNT -eq 0 ]]; then
+            FILTER_CHAINS+=("[0:v]$TEXT_FILTER")
         else
-            FILTER="overlay=10:10"
-            INPUTS=(-i "$v" -i "$WATERMARK_IMG")
+            FILTER_CHAINS+=("$TEXT_FILTER")
         fi
-    else
-        [[ -n "$TEXT" ]] && FILTER="$TEXT"
-        INPUTS=(-i "$v")
+        FILTER_COUNT=$((FILTER_COUNT + 1))
+    fi
+
+    # 添加字幕滤镜（最后添加，确保在最上层）
+    if [[ -n "$SUBTITLE_FILTER" ]]; then
+        if [[ $FILTER_COUNT -eq 0 ]]; then
+            FILTER_CHAINS+=("[0:v]$SUBTITLE_FILTER")
+        else
+            FILTER_CHAINS+=("$SUBTITLE_FILTER")
+        fi
+        FILTER_COUNT=$((FILTER_COUNT + 1))
+    fi
+
+    # 构建完整的filter_complex字符串
+    if [[ ${#FILTER_CHAINS[@]} -gt 0 ]]; then
+        FILTER_COMPLEX=$(IFS=,; echo "${FILTER_CHAINS[*]}")
     fi
 
     COMMON=(
@@ -151,22 +238,29 @@ while true; do
         "${AUDIO_ARGS[@]}"
     )
 
-    # COPY 优先
-    if [[ -z "$FILTER" && "$WATERMARK" == "no" && "$SHOW_FILENAME" == "no" && $(is_copy_compatible "$v" && echo "yes") == "yes" ]]; then
-        log "🚀 COPY 模式"
+    # COPY 优先（有滤镜时不能使用COPY）
+    if [[ -z "$FILTER_COMPLEX" && "$WATERMARK" == "no" && "$SHOW_FILENAME" == "no" && "$SUBTITLE_ENABLE" == "no" && $(is_copy_compatible "$v" && echo "yes") == "yes" ]]; then
+        log "🚀🚀 COPY 模式"
         ffmpeg -loglevel warning -re -i "$v" -c:v copy -c:a copy "${OUTPUTS[@]}" || {
             log "⚠️ COPY 失败 → 转码"
-            ffmpeg -loglevel error -re "${INPUTS[@]}" -c:v libx264 -vf "$FILTER" "${COMMON[@]}" \
-                "${OUTPUTS[@]}" || log "❌ 推流失败"
+            if [[ -n "$FILTER_COMPLEX" ]]; then
+                ffmpeg -loglevel error -re "${INPUTS[@]}" -filter_complex "$FILTER_COMPLEX" \
+                    -map "[v]" -c:v libx264 "${COMMON[@]}" "${OUTPUTS[@]}" || log "❌❌ 推流失败"
+            else
+                ffmpeg -loglevel error -re "${INPUTS[@]}" -c:v libx264 \
+                    "${COMMON[@]}" "${OUTPUTS[@]}" || log "❌❌ 推流失败"
+            fi
         }
     else
-        log "🚀 转码模式"
-        if [[ -n "$FILTER" ]]; then
-            ffmpeg -loglevel error -re "${INPUTS[@]}" -filter_complex "$FILTER" \
-                -c:v libx264 "${COMMON[@]}" "${OUTPUTS[@]}" || log "❌ 推流失败"
+        log "🚀🚀 转码模式"
+        if [[ -n "$FILTER_COMPLEX" ]]; then
+            # 使用复杂的滤镜链
+            ffmpeg -loglevel error -re "${INPUTS[@]}" -filter_complex "$FILTER_COMPLEX" \
+                -map "[v]" -c:v libx264 "${COMMON[@]}" "${OUTPUTS[@]}" || log "❌❌ 推流失败"
         else
+            # 简单转码
             ffmpeg -loglevel error -re "${INPUTS[@]}" -c:v libx264 \
-                "${COMMON[@]}" "${OUTPUTS[@]}" || log "❌ 推流失败"
+                "${COMMON[@]}" "${OUTPUTS[@]}" || log "❌❌ 推流失败"
         fi
     fi
 

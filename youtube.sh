@@ -11,7 +11,7 @@ VIDEO_DIR="${VIDEO_DIR:-/videos}"
 
 TARGET_FPS="${TARGET_FPS:-30}"
 KEYFRAME_INTERVAL_SECONDS="${KEYFRAME_INTERVAL_SECONDS:-2}"
-MAX_UPLOAD="${MAX_UPLOAD:-10000k}"
+MAX_UPLOAD="${MAX_UPLOAD:-20000k}"
 
 SHOW_FILENAME="${SHOW_FILENAME:-no}"
 WATERMARK="${WATERMARK:-no}"
@@ -92,7 +92,7 @@ choose_bitrate() {
     local v="3000k" m="3500k" b="6000k"
     (( h >= 2160 )) && v="14000k" m="15000k" b="20000k"
     (( h >= 1440 && h < 2160 )) && v="9000k" m="10000k" b="16000k"
-    (( h >= 1080 && h < 1440 )) && v="5500k" m="6000k" b="9000k"
+    (( h >= 1080 && h < 1440 )) && v="6000k" m="7500k" b="12000k"
 
     upl="${MAX_UPLOAD%k}"
     [[ ${v%k} -gt $upl ]] && v="${upl}k"

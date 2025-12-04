@@ -20,19 +20,36 @@ TARGET_FPS="${TARGET_FPS:-30}"
 
 # 自动获取来源 stream URL
 get_stream_url() {
-    echo "🔍 正在解析 YouTube 流地址（Android 客户端模式）..."
+    echo "🔍 尝试 android_embedded 客户端解析..."
 
-    local args="--extractor-args youtube:player_client=android;js_engine=node"
+    # ① android_embedded（支持 cookie）
+    REAL_URL=$(yt-dlp -g --cookies "$COOKIE_FILE" \
+        --extractor-args "youtube:player_client=android_embedded;js_engine=node" \
+        -f "bv*+ba/best" "$YOUTUBE_URL" 2>/dev/null || true)
 
-    if [[ -f "$COOKIE_FILE" ]]; then
-        REAL_URL=$(yt-dlp -g $args --cookies "$COOKIE_FILE" -f "bv*+ba/best" "$YOUTUBE_URL" || true)
-    else
-        REAL_URL=$(yt-dlp -g $args -f "bv*+ba/best" "$YOUTUBE_URL" || true)
+    if [[ -z "$REAL_URL" ]]; then
+        echo "⚠️ 切换到 iOS 客户端..."
+        REAL_URL=$(yt-dlp -g --cookies "$COOKIE_FILE" \
+            --extractor-args "youtube:player_client=ios;js_engine=node" \
+            -f "bv*+ba/best" "$YOUTUBE_URL" 2>/dev/null || true)
     fi
 
     if [[ -z "$REAL_URL" ]]; then
-        echo "❌ 解析失败（可能是 SABR 强制 + YouTube 风控）"
-        echo "⏳ 10 秒后重试…"
+        echo "⚠️ 切换到 web_creator 客户端..."
+        REAL_URL=$(yt-dlp -g --cookies "$COOKIE_FILE" \
+            --extractor-args "youtube:player_client=web_creator;js_engine=node" \
+            -f "bv*+ba/best" "$YOUTUBE_URL" 2>/dev/null || true)
+    fi
+
+    if [[ -z "$REAL_URL" ]]; then
+        echo "⚠️ 切换到 web 模式（最后尝试）..."
+        REAL_URL=$(yt-dlp -g --cookies "$COOKIE_FILE" \
+            --extractor-args "youtube:force_persistent_connection=True;player_client=web;js_engine=node" \
+            -f "bv*+ba/best" "$YOUTUBE_URL" 2>/dev/null || true)
+    fi
+
+    if [[ -z "$REAL_URL" ]]; then
+        echo "❌ 所有客户端都解析失败 —— 10 秒后重试"
         sleep 10
         get_stream_url
     fi
@@ -40,6 +57,7 @@ get_stream_url() {
     echo "🎯 解析成功"
     echo "$REAL_URL"
 }
+
 
 
 push_stream() {

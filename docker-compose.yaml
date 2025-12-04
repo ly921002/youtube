@@ -1,8 +1,8 @@
-version: '3'
+version: '3.9'
 
 services:
   ffmpegstream:
-    image: ly920907/ffmpeg-autostream:latest
+    image: ly920907/ffmpeg-autostream:online
     container_name: ffmpeg-streamer
     restart: always
     
@@ -10,14 +10,14 @@ services:
     network_mode: host
     
     environment:
-      MULTI_RTMP_URLS: "rtmp://a.rtmp.youtube.com/live2/直播码"
-      FONT_FILE: "/usr/share/fonts/noto/NotoSansCJK-Regular.ttc" 
-      SLEEP_SECONDS: "5" 
-      SHOW_FILENAME: "no" #默认copy模式，yes开启转码模式，显示当前播放文件名
-      WATERMARK: "no" #默认copy模式，yes开启转码模式，显示水印
-      WATERMARK_IMG: "" #水印路径
+      MULTI_RTMP_URLS: ${MULTI_RTMP_URLS}
+      YOUTUBE_URL: ${YOUTUBE_URL}
+      COOKIE_FILE: /cookies/cookie.txt
+      LOOP: ${LOOP}
+      TARGET_FPS: ${TARGET_FPS}
     volumes:
-      - /home/ubuntu/videos:/videos
+      - ./cookie.txt:/cookies/cookie.txt:ro
+      - ./logs:/app/logs
 
     # 限制 docker logs（否则 FFmpeg 会刷爆日志）
     logging:

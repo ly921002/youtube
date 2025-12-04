@@ -4,32 +4,24 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt update && apt install -y \
     wget curl python3 python3-pip ca-certificates git \
-    fonts-dejavu-core fonts-freefont-ttf \
-    build-essential \
+    ffmpeg build-essential \
+    nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 
-# =====================
-# 安装 FFmpeg（完整版）
-# =====================
-RUN apt update && apt install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+# 安装最新 yt-dlp（nightly 才支持 n-challenge 完整解密）
+RUN pip3 install --upgrade --force-reinstall "yt-dlp[default]"
 
-# =====================
-# 安装 yt-dlp
-# =====================
-RUN pip3 install --no-cache-dir yt-dlp
+# 安装 EJS challenge-solver
+RUN mkdir -p /opt/challenge-solver \
+    && git clone https://github.com/yt-dlp/yt-dlp.git /opt/challenge-solver \
+    && ln -s /opt/challenge-solver/yt_dlp/extractor/* /usr/local/lib/python3.10/dist-packages/yt_dlp/extractor/ || true
 
-# =====================
-# 安装 Node.js（v18）
-# =====================
-RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
-    && apt install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
 
 # =====================
 # 目录
 # =====================
 RUN mkdir -p /app /cookies
-COPY cookies.txt /cookies/cookie.txt
+
 # 拷贝推流脚本
 COPY youtube.sh /app/youtube.sh
 RUN chmod +x /app/youtube.sh

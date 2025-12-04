@@ -29,7 +29,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
 # 目录
 # =====================
 RUN mkdir -p /app /cookies
-
+COPY cookies.txt /cookies/cookie.txt
 # 拷贝推流脚本
 COPY youtube.sh /app/youtube.sh
 RUN chmod +x /app/youtube.sh

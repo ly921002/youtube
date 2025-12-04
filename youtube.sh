@@ -20,17 +20,19 @@ TARGET_FPS="${TARGET_FPS:-30}"
 
 # 自动获取来源 stream URL
 get_stream_url() {
-    echo "🔍 正在解析 YouTube 流地址..."
+    echo "🔍 解析 YouTube 流地址..."
+
+    local args="--extractor-args youtube:player_client=web;js_engine=node"
 
     if [[ -f "$COOKIE_FILE" ]]; then
-        REAL_URL=$(yt-dlp -g --cookies "$COOKIE_FILE" --extractor-args "youtube:player_client=web;js_engine=node" "$YOUTUBE_URL")
+        REAL_URL=$(yt-dlp -g --cookies "$COOKIE_FILE" $args "$YOUTUBE_URL" || true)
     else
-        REAL_URL=$(yt-dlp -g --extractor-args "youtube:player_client=web;js_engine=node" "$YOUTUBE_URL")
+        REAL_URL=$(yt-dlp -g $args "$YOUTUBE_URL" || true)
     fi
 
     if [[ -z "$REAL_URL" ]]; then
-        echo "❌ 无法解析直播流，5 秒后重试"
-        sleep 5
+        echo "❌ 获取失败（可能是 EJS 还未成功加载 或 Cookie 失效）"
+        sleep 10
         get_stream_url
     fi
 

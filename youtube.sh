@@ -20,18 +20,19 @@ TARGET_FPS="${TARGET_FPS:-30}"
 
 # 自动获取来源 stream URL
 get_stream_url() {
-    echo "🔍 解析 YouTube 流地址..."
+    echo "🔍 正在解析 YouTube 流地址（Android 客户端模式）..."
 
-    local args="--extractor-args youtube:player_client=web;js_engine=node"
+    local args="--extractor-args youtube:player_client=android;js_engine=node"
 
     if [[ -f "$COOKIE_FILE" ]]; then
-        REAL_URL=$(yt-dlp -g --cookies "$COOKIE_FILE" $args "$YOUTUBE_URL" || true)
+        REAL_URL=$(yt-dlp -g $args --cookies "$COOKIE_FILE" -f "bv*+ba/best" "$YOUTUBE_URL" || true)
     else
-        REAL_URL=$(yt-dlp -g $args "$YOUTUBE_URL" || true)
+        REAL_URL=$(yt-dlp -g $args -f "bv*+ba/best" "$YOUTUBE_URL" || true)
     fi
 
     if [[ -z "$REAL_URL" ]]; then
-        echo "❌ 获取失败（可能是 EJS 还未成功加载 或 Cookie 失效）"
+        echo "❌ 解析失败（可能是 SABR 强制 + YouTube 风控）"
+        echo "⏳ 10 秒后重试…"
         sleep 10
         get_stream_url
     fi
@@ -39,6 +40,7 @@ get_stream_url() {
     echo "🎯 解析成功"
     echo "$REAL_URL"
 }
+
 
 push_stream() {
     local INPUT_URL="$1"

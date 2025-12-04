@@ -19,13 +19,8 @@ WATERMARK_IMG="${WATERMARK_IMG:-}"
 FONT_FILE="${FONT_FILE:-}"
 
 VIDEO_EXTENSIONS="${VIDEO_EXTENSIONS:-mp4,avi,mkv,mov,flv,wmv,webm}"
-# 新增：字幕文件扩展名
 SUBTITLE_EXTENSIONS="${SUBTITLE_EXTENSIONS:-ass,srt}" 
-# 新增：是否启用字幕
 ENABLE_SUBTITLES="${ENABLE_SUBTITLES:-no}" 
-# 新增：当字幕文件名与视频文件名不匹配时，尝试加载的默认字幕文件（例如：/videos/default.srt）
-DEFAULT_SUBTITLE_FILE="${DEFAULT_SUBTITLE_FILE:-}"
-
 SLEEP_SECONDS="${SLEEP_SECONDS:-8}"
 
 # -------------------------
@@ -80,11 +75,6 @@ load_videos() {
                         break
                     fi
                 done
-
-                # 如果没有找到匹配的同名字幕，尝试默认字幕
-                if [[ -z "$found_sub" && -n "$DEFAULT_SUBTITLE_FILE" && -f "$DEFAULT_SUBTITLE_FILE" ]]; then
-                    found_sub="$DEFAULT_SUBTITLE_FILE"
-                fi
 
                 if [[ -n "$found_sub" ]]; then
                     SUBTITLE_MAP["$f"]="$found_sub"

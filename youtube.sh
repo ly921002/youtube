@@ -23,9 +23,9 @@ get_stream_url() {
     echo "🔍 正在解析 YouTube 流地址..."
 
     if [[ -f "$COOKIE_FILE" ]]; then
-        REAL_URL=$(yt-dlp -g --cookies "$COOKIE_FILE" "$YOUTUBE_URL")
+        REAL_URL=$(yt-dlp -g --cookies "$COOKIE_FILE" --extractor-args "youtube:player_client=web;js_engine=node" "$YOUTUBE_URL")
     else
-        REAL_URL=$(yt-dlp -g "$YOUTUBE_URL")
+        REAL_URL=$(yt-dlp -g --extractor-args "youtube:player_client=web;js_engine=node" "$YOUTUBE_URL")
     fi
 
     if [[ -z "$REAL_URL" ]]; then

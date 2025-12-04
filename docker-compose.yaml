@@ -17,7 +17,6 @@ services:
       TARGET_FPS: ${TARGET_FPS}
     volumes:
       - ./cookie.txt:/cookies/cookie.txt:ro
-      - ./logs:/app/logs
 
     # 限制 docker logs（否则 FFmpeg 会刷爆日志）
     logging:

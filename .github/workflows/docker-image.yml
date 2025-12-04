@@ -2,12 +2,12 @@ name: Build and Push Docker Image (Multi-Arch)
 
 on:
   push:
-    branches: ["main"]
+    branches: ["online"]
     paths:
       - 'Dockerfile'
       - 'youtube.sh'
   pull_request:
-    branches: [ main ]
+    branches: [ online ]
   workflow_dispatch:
 
 jobs:
@@ -37,4 +37,4 @@ jobs:
         file: ./Dockerfile
         push: true
         platforms: linux/amd64,linux/arm64
-        tags: ${{ secrets.DOCKERHUB_USERNAME }}/ffmpeg-autostream:latest
+        tags: ${{ secrets.DOCKERHUB_USERNAME }}/ffmpeg-autostream:online

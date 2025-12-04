@@ -1,28 +1,39 @@
-FROM alpine:3.19
+FROM ubuntu:22.04
 
-# 安装 ffmpeg（Alpine 的 ffmpeg 包含 ffprobe）
-RUN apk add --no-cache ffmpeg bash coreutils findutils ttf-dejavu fontconfig
-RUN apk add --no-cache font-noto-cjk
+ENV DEBIAN_FRONTEND=noninteractive
 
-WORKDIR /app
+RUN apt update && apt install -y \
+    wget curl python3 python3-pip ca-certificates git \
+    fonts-dejavu-core fonts-freefont-ttf \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# =====================
+# 安装 FFmpeg（完整版）
+# =====================
+RUN apt update && apt install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+
+# =====================
+# 安装 yt-dlp
+# =====================
+RUN pip3 install --no-cache-dir yt-dlp
+
+# =====================
+# 安装 Node.js（v18）
+# =====================
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# =====================
+# 目录
+# =====================
+RUN mkdir -p /app /cookies
 
 # 拷贝推流脚本
 COPY youtube.sh /app/youtube.sh
 RUN chmod +x /app/youtube.sh
 
-# 默认环境变量（可被外部覆盖）
-ENV MULTI_RTMP_URLS=""
-ENV VIDEO_DIR="/videos"
-ENV WATERMARK="no"
-ENV WATERMARK_IMG=""
-
-# 新增：是否显示文件名
-ENV SHOW_FILENAME="yes"
-
-# 新增：指定字体路径（可选，默认留空会使用系统字体）
-ENV FONT_FILE=""
-
-# 循环间隔
-ENV SLEEP_SECONDS="10"
+WORKDIR /app
 
 ENTRYPOINT ["/bin/bash", "/app/youtube.sh"]

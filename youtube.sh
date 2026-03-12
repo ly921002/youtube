@@ -203,7 +203,7 @@ while true; do
     # COPY 优先 (如果启用了任何滤镜，则不能使用 COPY 模式)
     if [[ -z "$FILTER_CHAIN" && $(is_copy_compatible "$v" && echo "yes") == "yes" ]]; then
         log "🚀 COPY 模式"
-        ffmpeg -loglevel warning -re -i "$v" -c:v copy -c:a copy "${OUTPUTS[@]}" || {
+        ffmpeg -loglevel warning -re -i "$v" -c:v copy -c:a aac -b:a 128k "${OUTPUTS[@]}" || {
             log "⚠️ COPY 失败 → 转码"
             # 此时 $FILTER_CHAIN 应该为空，但为了容错，保留它
             ffmpeg -loglevel error -re "${INPUTS[@]}" -c:v libx264 -vf "$FILTER_CHAIN" "${COMMON[@]}" \

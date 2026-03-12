@@ -6,21 +6,54 @@ echo "=== Ultra FFmpeg Auto Stream v1 (Subtitles Support) ==="
 # -------------------------
 # 环境变量
 # -------------------------
+# -------------------------
+# 必填参数
+# -------------------------
+# RTMP 推流地址（多个地址用空格分隔）
 MULTI_RTMP_URLS="${MULTI_RTMP_URLS:?需要设置 MULTI_RTMP_URLS（空格分隔）}"
+# 视频目录
 VIDEO_DIR="${VIDEO_DIR:-/videos}"
 
-TARGET_FPS="${TARGET_FPS:-30}"
+# -------------------------
+# 视频编码参数
+# -------------------------
+# 推流目标帧率
+TARGET_FPS="${TARGET_FPS:-30}" 
+# 关键帧间隔（秒）
 KEYFRAME_INTERVAL_SECONDS="${KEYFRAME_INTERVAL_SECONDS:-2}"
+# 最大上传码率限制
 MAX_UPLOAD="${MAX_UPLOAD:-20000k}"
 
+# -------------------------
+# 画面叠加参数
+# -------------------------
+# 是否在视频左下角显示文件名
 SHOW_FILENAME="${SHOW_FILENAME:-no}"
+# 是否启用水印
 WATERMARK="${WATERMARK:-no}"
+# 水印图片路径
 WATERMARK_IMG="${WATERMARK_IMG:-}"
+# 字体文件（用于 drawtext）
 FONT_FILE="${FONT_FILE:-}"
 
+# -------------------------
+# 视频文件类型
+# -------------------------
+# 扫描的视频扩展名
 VIDEO_EXTENSIONS="${VIDEO_EXTENSIONS:-mp4,avi,mkv,mov,flv,wmv,webm}"
+
+# -------------------------
+# 字幕相关
+# -------------------------
+# 支持的字幕格式
 SUBTITLE_EXTENSIONS="${SUBTITLE_EXTENSIONS:-ass,srt,vtt,lrc}" 
+# 是否启用字幕自动加载
 ENABLE_SUBTITLES="${ENABLE_SUBTITLES:-no}" 
+
+# -------------------------
+# 其他参数
+# -------------------------
+# 每个视频播放完后的等待时间
 SLEEP_SECONDS="${SLEEP_SECONDS:-8}"
 
 # -------------------------

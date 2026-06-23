@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-echo "=== FFmpeg Auto Stream v2 ==="
+echo "=== FFmpeg Auto Stream v1 ==="
 
 MULTI_RTMP_URLS="${MULTI_RTMP_URLS:?MULTI_RTMP_URLS is required, separated by spaces}"
 VIDEO_DIR="${VIDEO_DIR:-/videos}"
-
+FOLDER="${FOLDER:-2}"
 TARGET_FPS="${TARGET_FPS:-30}"
 KEYFRAME_INTERVAL_SECONDS="${KEYFRAME_INTERVAL_SECONDS:-2}"
 MAX_UPLOAD="${MAX_UPLOAD:-20000k}"
@@ -138,7 +138,7 @@ load_videos() {
     local file subtitle
 
     build_find_args video_find_args "$VIDEO_EXTENSIONS"
-    mapfile -t raw_videos < <(find "$VIDEO_DIR" -maxdepth 1 -type f \( "${video_find_args[@]}" \) 2>/dev/null)
+    mapfile -t raw_videos < <(find "$VIDEO_DIR" -maxdepth $FOLDER -type f \( "${video_find_args[@]}" \) 2>/dev/null)
 
     valid=()
     SUBTITLE_MAP=()

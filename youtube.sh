@@ -138,7 +138,7 @@ load_videos() {
     local file subtitle
 
     build_find_args video_find_args "$VIDEO_EXTENSIONS"
-    mapfile -t raw_videos < <(find "$VIDEO_DIR" -maxdepth $FOLDER -type f \( "${video_find_args[@]}" \) 2>/dev/null)
+    mapfile -t raw_videos < <(find "$VIDEO_DIR" -maxdepth "$FOLDER" -type f \( "${video_find_args[@]}" \) 2>/dev/null)
 
     valid=()
     SUBTITLE_MAP=()

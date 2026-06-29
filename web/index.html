@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>直播状态面板</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-2: #1f2937;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --good: #22c55e;
+      --warn: #f59e0b;
+      --bad: #ef4444;
+    }
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: linear-gradient(135deg, var(--bg), #111827);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      box-sizing: border-box;
+    }
+    .card {
+      width: min(920px, 100%);
+      background: rgba(17, 24, 39, 0.95);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 20px;
+      box-shadow: 0 20px 45px rgba(0,0,0,0.35);
+      padding: 24px;
+    }
+    h1 { margin: 0 0 8px; font-size: 28px; }
+    .subtitle { margin: 0 0 20px; color: var(--muted); }
+    .status-row {
+      display: flex; align-items: center; gap: 12px; margin-bottom: 18px;
+    }
+    .pill {
+      display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px;
+      border-radius: 999px; font-weight: 600; background: var(--panel-2);
+    }
+    .pill::before {
+      content: ''; width: 10px; height: 10px; border-radius: 50%; background: var(--accent);
+      display: inline-block;
+    }
+    .pill.streaming::before { background: var(--good); }
+    .pill.error::before { background: var(--bad); }
+    .pill.waiting::before { background: var(--warn); }
+    .grid {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px;
+      margin-top: 16px;
+    }
+    .item {
+      background: var(--panel-2);
+      border-radius: 16px;
+      padding: 16px;
+      min-height: 90px;
+    }
+    .label { color: var(--muted); font-size: 13px; margin-bottom: 6px; }
+    .value { font-size: 20px; font-weight: 600; word-break: break-all; }
+    .muted { color: var(--muted); font-size: 14px; margin-top: 6px; }
+    .footer { margin-top: 20px; color: var(--muted); font-size: 13px; }
+    @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>直播状态面板</h1>
+    <p class="subtitle">实时展示当前推流内容、模式和状态信息</p>
+    <div class="status-row">
+      <span id="status-pill" class="pill">正在读取状态…</span>
+      <span id="updated-at" class="muted"></span>
+    </div>
+    <div class="grid">
+      <div class="item"><div class="label">当前视频</div><div id="current-video" class="value">-</div></div>
+      <div class="item"><div class="label">播放进度</div><div id="playlist" class="value">-</div></div>
+      <div class="item"><div class="label">推流模式</div><div id="mode" class="value">-</div></div>
+      <div class="item"><div class="label">音频状态</div><div id="audio" class="value">-</div></div>
+      <div class="item"><div class="label">码率</div><div id="bitrate" class="value">-</div></div>
+      <div class="item"><div class="label">最近错误</div><div id="error" class="value">-</div></div>
+    </div>
+    <div class="footer">状态文件会每 5 秒自动刷新，地址：/status/current_status.json</div>
+  </div>
+
+  <script>
+    const statusPill = document.getElementById('status-pill');
+    const updatedAt = document.getElementById('updated-at');
+    const currentVideo = document.getElementById('current-video');
+    const playlist = document.getElementById('playlist');
+    const mode = document.getElementById('mode');
+    const audio = document.getElementById('audio');
+    const bitrate = document.getElementById('bitrate');
+    const error = document.getElementById('error');
+
+    async function loadStatus() {
+      try {
+        const response = await fetch('/status/current_status.json?ts=' + Date.now());
+        if (!response.ok) throw new Error('status file not ready');
+        const data = await response.json();
+        render(data);
+      } catch (e) {
+        statusPill.className = 'pill waiting';
+        statusPill.textContent = '等待状态文件';
+        updatedAt.textContent = '尚未生成状态';
+        currentVideo.textContent = '-';
+        playlist.textContent = '-';
+        mode.textContent = '-';
+        audio.textContent = '-';
+        bitrate.textContent = '-';
+        error.textContent = e.message;
+      }
+    }
+
+    function render(data) {
+      const status = data.status || 'waiting';
+      statusPill.className = 'pill ' + (status === 'error' ? 'error' : status === 'playing' ? 'streaming' : 'waiting');
+      statusPill.textContent = status === 'error' ? '异常' : status === 'playing' ? '推流中' : status === 'starting' ? '启动中' : '等待中';
+      updatedAt.textContent = '更新时间：' + (data.updated_at || '-');
+      currentVideo.textContent = data.current_video || '-';
+      playlist.textContent = (data.playlist_index || 0) + '/' + (data.playlist_total || 0);
+      mode.textContent = data.mode || '-';
+      audio.textContent = data.audio || '-';
+      bitrate.textContent = (data.video_bitrate || '-') + ' / ' + (data.maxrate || '-') + ' / ' + (data.bufsize || '-');
+      error.textContent = data.last_error || '暂无';
+    }
+
+    loadStatus();
+    setInterval(loadStatus, 5000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "status": "waiting",
+  "current_video": "-",
+  "playlist_index": 0,
+  "playlist_total": 0,
+  "mode": "-",
+  "audio": "-",
+  "video_bitrate": "-",
+  "maxrate": "-",
+  "bufsize": "-",
+  "last_error": "-",
+  "updated_at": "2026-06-29 23:44:29"
+}

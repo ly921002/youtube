@@ -19,10 +19,11 @@
 创建 `docker-compose.yml` 文件
 
 启动服务：
-
+```
 bash
 
 docker compose up -d
+```
 
 ## 📂 文件结构
 
@@ -50,6 +51,8 @@ docker compose up -d
 | `WATERMARK_IMG` | 空 | 水印图片路径 |
 | `FONT_FILE` | 空 | 字体文件路径 |
 | `VIDEO_EXTENSIONS` | `mp4,avi,mkv,...` | 支持的视频格式 |
+| `SUBTITLE_EXTENSIONS` | `ass,srt,vtt,lrc,...` | 支持的字幕格式 |
+| `ENABLE_SUBTITLES` | `no` | 字幕自动加载 |
 | `SLEEP_SECONDS` | `8` | 视频间隔秒数 |
 
 ## 🛡 稳定性特性

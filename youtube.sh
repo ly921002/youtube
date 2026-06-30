@@ -3,13 +3,13 @@ set -Eeuo pipefail
 
 echo "=== FFmpeg Auto Stream v1 ==="
 
-MULTI_RTMP_URLS="${MULTI_RTMP_URLS:-rtmp://a.rtmp.youtube.com/live2/8a37-2wv8-fk1d-98jw-cxyu}"
+MULTI_RTMP_URLS="${MULTI_RTMP_URLS:-?MULTI_RTMP_URLS}"
 VIDEO_DIR="${VIDEO_DIR:-/config/Desktop/youtube/videos}"
 FOLDER="${FOLDER:-2}"
 TARGET_FPS="${TARGET_FPS:-30}"
 KEYFRAME_INTERVAL_SECONDS="${KEYFRAME_INTERVAL_SECONDS:-2}"
 MAX_UPLOAD="${MAX_UPLOAD:-20000k}"
-STREAM_MODE="${STREAM_MODE:-copy}"
+STREAM_MODE="${STREAM_MODE:-auto}"
 
 SHOW_FILENAME="${SHOW_FILENAME:-no}"
 WATERMARK="${WATERMARK:-no}"

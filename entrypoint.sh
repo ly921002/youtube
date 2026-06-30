@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEB_DIR="$SCRIPT_DIR/web"
 STATUS_DIR="${STATUS_DIR:-$SCRIPT_DIR/web/status}"
 mkdir -p "$STATUS_DIR"
+export STATUS_DIR
 
 if command -v httpd >/dev/null 2>&1; then
   httpd -f -p 8080 -h "$WEB_DIR" >/tmp/httpd.log 2>&1 &

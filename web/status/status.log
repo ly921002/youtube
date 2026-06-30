@@ -1,0 +1,80 @@
+[2026-06-30 11:15:43] ffmpeg:         encoder         : Lavc61.13.100 libx264
+[2026-06-30 11:15:43] ffmpeg:   Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, stereo, fltp, 71 kb/s (default)
+[2026-06-30 11:15:43] ffmpeg:       Metadata:
+[2026-06-30 11:15:43] ffmpeg:         handler_name    : SoundHandler
+[2026-06-30 11:15:43] ffmpeg:         vendor_id       : [0][0][0][0]
+[2026-06-30 11:15:43] ffmpeg: Stream mapping:
+[2026-06-30 11:15:43] ffmpeg:   Stream #0:0 -> #0:0 (copy)
+[2026-06-30 11:15:43] ffmpeg:   Stream #0:1 -> #0:1 (aac (native) -> aac (native))
+[2026-06-30 11:15:43] ffmpeg: Press [q] to stop, [?] for help
+[2026-06-30 11:15:43] ffmpeg: Output #0, flv, to 'rtmp://a.rtmp.youtube.com/live2/8a37-2wv8-fk1d-98jw-cxyu':
+[2026-06-30 11:15:43] ffmpeg:   Metadata:
+[2026-06-30 11:15:43] ffmpeg:     major_brand     : isom
+[2026-06-30 11:15:43] ffmpeg:     minor_version   : 512
+[2026-06-30 11:15:43] ffmpeg:     compatible_brands: isomiso2avc1mp41
+[2026-06-30 11:15:44] ffmpeg:     encoder         : Lavf61.7.103
+[2026-06-30 11:15:44] ffmpeg:   Stream #0:0(und): Video: h264 (High) ([7][0][0][0] / 0x0007), yuv420p(progressive), 960x720 [SAR 1:1 DAR 4:3], q=2-31, 1459 kb/s, 15 fps, 15 tbr, 1k tbn (default)
+[2026-06-30 11:15:44] ffmpeg:       Metadata:
+[2026-06-30 11:15:44] ffmpeg:         handler_name    : VideoHandler
+[2026-06-30 11:15:44] ffmpeg:         vendor_id       : [0][0][0][0]
+[2026-06-30 11:15:44] ffmpeg:         encoder         : Lavc61.13.100 libx264
+[2026-06-30 11:15:44] ffmpeg:   Stream #0:1(und): Audio: aac (LC) ([10][0][0][0] / 0x000A), 44100 Hz, stereo, fltp, 128 kb/s (default)
+[2026-06-30 11:15:44] ffmpeg:       Metadata:
+[2026-06-30 11:15:44] ffmpeg:         handler_name    : SoundHandler
+[2026-06-30 11:15:44] ffmpeg:         vendor_id       : [0][0][0][0]
+[2026-06-30 11:15:44] ffmpeg:         encoder         : Lavc61.19.101 aac
+[2026-06-30 11:19:34] Copy mode failed, retrying with transcode mode because STREAM_MODE=auto
+[2026-06-30 11:20:07] Configured 1 RTMP output(s)
+[2026-06-30 11:20:07] Scanning videos in /config/Desktop/youtube/videos
+[2026-06-30 11:20:07] Stream mode policy: copy
+[2026-06-30 11:20:07] Playing (1/1): 甜咖啡最经典CS视频.mp4
+[2026-06-30 11:20:08] Using copy mode: video=3000k audio=yes
+[2026-06-30 11:20:08] ffmpeg: ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers
+[2026-06-30 11:20:08] ffmpeg:   built with gcc 14 (Debian 14.2.0-19)
+[2026-06-30 11:20:08] ffmpeg:   configuration: --prefix=/usr --extra-version=0+deb13u1 --toolchain=hardened --libdir=/usr/lib/aarch64-linux-gnu --incdir=/usr/include/aarch64-linux-gnu --arch=arm64 --enable-gpl --disable-stripping --disable-libmfx --disable-omx --enable-gnutls --enable-libaom --enable-libass --enable-libbs2b --enable-libcdio --enable-libcodec2 --enable-libdav1d --enable-libflite --enable-libfontconfig --enable-libfreetype --enable-libfribidi --enable-libglslang --enable-libgme --enable-libgsm --enable-libharfbuzz --enable-libmp3lame --enable-libmysofa --enable-libopenjpeg --enable-libopenmpt --enable-libopus --enable-librubberband --enable-libshine --enable-libsnappy --enable-libsoxr --enable-libspeex --enable-libtheora --enable-libtwolame --enable-libvidstab --enable-libvorbis --enable-libvpx --enable-libwebp --enable-libx265 --enable-libxml2 --enable-libxvid --enable-libzimg --enable-openal --enable-opencl --enable-opengl --disable-sndio --disable-libvpl --enable-libdc1394 --enable-libdrm --enable-libiec61883 --enable-chromaprint --enable-frei0r --enable-ladspa --enable-libbluray --enable-libcaca --enable-libdvdnav --enable-libdvdread --enable-libjack --enable-libpulse --enable-librabbitmq --enable-librist --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libx264 --enable-libzmq --enable-libzvbi --enable-lv2 --enable-sdl2 --enable-libplacebo --enable-librav1e --enable-pocketsphinx --enable-librsvg --enable-libjxl --enable-shared
+[2026-06-30 11:20:08] ffmpeg:   libavutil      59. 39.100 / 59. 39.100
+[2026-06-30 11:20:08] ffmpeg:   libavcodec     61. 19.101 / 61. 19.101
+[2026-06-30 11:20:08] ffmpeg:   libavformat    61.  7.103 / 61.  7.103
+[2026-06-30 11:20:08] ffmpeg:   libavdevice    61.  3.100 / 61.  3.100
+[2026-06-30 11:20:08] ffmpeg:   libavfilter    10.  5.100 / 10.  5.100
+[2026-06-30 11:20:08] ffmpeg:   libswscale      8.  3.100 /  8.  3.100
+[2026-06-30 11:20:08] ffmpeg:   libswresample   5.  3.100 /  5.  3.100
+[2026-06-30 11:20:08] ffmpeg:   libpostproc    58.  3.100 / 58.  3.100
+[2026-06-30 11:20:08] ffmpeg: Input #0, mov,mp4,m4a,3gp,3g2,mj2, from '/config/Desktop/youtube/videos/甜咖啡最经典CS视频.mp4':
+[2026-06-30 11:20:08] ffmpeg:   Metadata:
+[2026-06-30 11:20:08] ffmpeg:     major_brand     : isom
+[2026-06-30 11:20:09] ffmpeg:     minor_version   : 512
+[2026-06-30 11:20:09] ffmpeg:     compatible_brands: isomiso2avc1mp41
+[2026-06-30 11:20:09] ffmpeg:     encoder         : Lavf61.5.101
+[2026-06-30 11:20:09] ffmpeg:   Duration: 00:16:13.76, start: 0.000000, bitrate: 1535 kb/s
+[2026-06-30 11:20:09] ffmpeg:   Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(progressive), 960x720 [SAR 1:1 DAR 4:3], 1459 kb/s, 15 fps, 15 tbr, 15360 tbn (default)
+[2026-06-30 11:20:09] ffmpeg:       Metadata:
+[2026-06-30 11:20:09] ffmpeg:         handler_name    : VideoHandler
+[2026-06-30 11:20:09] ffmpeg:         vendor_id       : [0][0][0][0]
+[2026-06-30 11:20:09] ffmpeg:         encoder         : Lavc61.13.100 libx264
+[2026-06-30 11:20:09] ffmpeg:   Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, stereo, fltp, 71 kb/s (default)
+[2026-06-30 11:20:09] ffmpeg:       Metadata:
+[2026-06-30 11:20:09] ffmpeg:         handler_name    : SoundHandler
+[2026-06-30 11:20:09] ffmpeg:         vendor_id       : [0][0][0][0]
+[2026-06-30 11:20:09] ffmpeg: Stream mapping:
+[2026-06-30 11:20:09] ffmpeg:   Stream #0:0 -> #0:0 (copy)
+[2026-06-30 11:20:09] ffmpeg:   Stream #0:1 -> #0:1 (aac (native) -> aac (native))
+[2026-06-30 11:20:09] ffmpeg: Press [q] to stop, [?] for help
+[2026-06-30 11:20:09] ffmpeg: Output #0, flv, to 'rtmp://a.rtmp.youtube.com/live2/8a37-2wv8-fk1d-98jw-cxyu':
+[2026-06-30 11:20:09] ffmpeg:   Metadata:
+[2026-06-30 11:20:09] ffmpeg:     major_brand     : isom
+[2026-06-30 11:20:09] ffmpeg:     minor_version   : 512
+[2026-06-30 11:20:09] ffmpeg:     compatible_brands: isomiso2avc1mp41
+[2026-06-30 11:20:09] ffmpeg:     encoder         : Lavf61.7.103
+[2026-06-30 11:20:09] ffmpeg:   Stream #0:0(und): Video: h264 (High) ([7][0][0][0] / 0x0007), yuv420p(progressive), 960x720 [SAR 1:1 DAR 4:3], q=2-31, 1459 kb/s, 15 fps, 15 tbr, 1k tbn (default)
+[2026-06-30 11:20:09] ffmpeg:       Metadata:
+[2026-06-30 11:20:09] ffmpeg:         handler_name    : VideoHandler
+[2026-06-30 11:20:09] ffmpeg:         vendor_id       : [0][0][0][0]
+[2026-06-30 11:20:09] ffmpeg:         encoder         : Lavc61.13.100 libx264
+[2026-06-30 11:20:09] ffmpeg:   Stream #0:1(und): Audio: aac (LC) ([10][0][0][0] / 0x000A), 44100 Hz, stereo, fltp, 128 kb/s (default)
+[2026-06-30 11:20:09] ffmpeg:       Metadata:
+[2026-06-30 11:20:09] ffmpeg:         handler_name    : SoundHandler
+[2026-06-30 11:20:09] ffmpeg:         vendor_id       : [0][0][0][0]
+[2026-06-30 11:20:10] ffmpeg:         encoder         : Lavc61.19.101 aac
+[2026-06-30 11:25:38] Copy mode failed and STREAM_MODE=copy, skipping transcode fallback
+[2026-06-30 11:25:38] Please verify that MULTI_RTMP_URLS points to a valid RTMP destination or set STREAM_MODE=transcode.

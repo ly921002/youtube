@@ -1,9 +1,25 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-STATUS_DIR="${STATUS_DIR:-/app/web/status}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STATUS_DIR="${STATUS_DIR:-$SCRIPT_DIR/web/status}"
 STATUS_FILE="$STATUS_DIR/current_status.json"
+STATUS_LOG_FILE="$STATUS_DIR/status.log"
+STATUS_LOG_LINES="${STATUS_LOG_LINES:-80}"
 mkdir -p "$STATUS_DIR"
+
+append_status_log() {
+    local message="$*"
+    local max_lines="$STATUS_LOG_LINES"
+    [[ "$max_lines" =~ ^[0-9]+$ ]] || max_lines=80
+
+    mkdir -p "$STATUS_DIR"
+    printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$message" >> "$STATUS_LOG_FILE"
+    if command -v tail >/dev/null 2>&1; then
+        tail -n "$max_lines" "$STATUS_LOG_FILE" > "$STATUS_LOG_FILE.tmp"
+        mv "$STATUS_LOG_FILE.tmp" "$STATUS_LOG_FILE"
+    fi
+}
 
 write_status() {
     local status="$1"
@@ -18,13 +34,18 @@ write_status() {
     local last_error="${10:-}"
 
     if command -v python3 >/dev/null 2>&1; then
-        python3 - "$STATUS_FILE" "$status" "$current_video" "$playlist_index" "$playlist_total" "$mode" "$audio" "$video_bitrate" "$maxrate" "$bufsize" "$last_error" <<'PY'
+        python3 - "$STATUS_FILE" "$STATUS_LOG_FILE" "$status" "$current_video" "$playlist_index" "$playlist_total" "$mode" "$audio" "$video_bitrate" "$maxrate" "$bufsize" "$last_error" <<'PY'
 import json
 import os
 import sys
 from datetime import datetime
 
-status_file, status, current_video, playlist_index, playlist_total, mode, audio, video_bitrate, maxrate, bufsize, last_error = sys.argv[1:]
+status_file, log_file, status, current_video, playlist_index, playlist_total, mode, audio, video_bitrate, maxrate, bufsize, last_error = sys.argv[1:]
+
+logs = []
+if os.path.exists(log_file):
+    with open(log_file, "r", encoding="utf-8", errors="replace") as fh:
+        logs = [line.rstrip("\n") for line in fh.readlines()[-80:]]
 
 payload = {
     "status": status,
@@ -37,6 +58,7 @@ payload = {
     "maxrate": maxrate,
     "bufsize": bufsize,
     "last_error": last_error,
+    "logs": logs,
     "updated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
 }
 
@@ -58,6 +80,7 @@ PY
   "maxrate": "$maxrate",
   "bufsize": "$bufsize",
   "last_error": "$last_error",
+  "logs": [],
   "updated_at": "$(date '+%Y-%m-%d %H:%M:%S')"
 }
 EOF

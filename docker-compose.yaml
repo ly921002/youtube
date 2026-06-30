@@ -13,6 +13,7 @@ services:
       MULTI_RTMP_URLS: "rtmp://a.rtmp.youtube.com/live2/直播码"
       FONT_FILE: "/usr/share/fonts/noto/NotoSansCJK-Regular.ttc" 
       SLEEP_SECONDS: "5" 
+      STREAM_MODE: "transcode" # transcode稳定转码；auto自动尝试copy；copy固定copy
       SHOW_FILENAME: "no" #默认copy模式，yes开启转码模式，显示当前播放文件名
       WATERMARK: "no" #默认copy模式，yes开启转码模式，显示水印
       WATERMARK_IMG: "" #水印路径

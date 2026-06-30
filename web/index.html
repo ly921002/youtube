@@ -66,6 +66,34 @@
     .label { color: var(--muted); font-size: 13px; margin-bottom: 6px; }
     .value { font-size: 20px; font-weight: 600; word-break: break-all; }
     .muted { color: var(--muted); font-size: 14px; margin-top: 6px; }
+    .log-panel {
+      margin-top: 16px;
+      background: #020617;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .log-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 14px;
+      background: rgba(15, 23, 42, 0.85);
+      border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+    }
+    .log-title { font-weight: 700; }
+    .log-body {
+      margin: 0;
+      padding: 14px;
+      min-height: 180px;
+      max-height: 320px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #dbeafe;
+      font: 13px/1.55 Consolas, Monaco, 'Courier New', monospace;
+    }
     .footer { margin-top: 20px; color: var(--muted); font-size: 13px; }
     @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
   </style>
@@ -86,6 +114,13 @@
       <div class="item"><div class="label">码率</div><div id="bitrate" class="value">-</div></div>
       <div class="item"><div class="label">最近错误</div><div id="error" class="value">-</div></div>
     </div>
+    <div class="log-panel">
+      <div class="log-head">
+        <div class="log-title">运行日志</div>
+        <div id="log-count" class="muted">-</div>
+      </div>
+      <pre id="logs" class="log-body">正在读取日志...</pre>
+    </div>
     <div class="footer">状态文件会每 5 秒自动刷新，地址：/status/current_status.json</div>
   </div>
 
@@ -98,6 +133,8 @@
     const audio = document.getElementById('audio');
     const bitrate = document.getElementById('bitrate');
     const error = document.getElementById('error');
+    const logs = document.getElementById('logs');
+    const logCount = document.getElementById('log-count');
 
     async function loadStatus() {
       try {
@@ -115,6 +152,8 @@
         audio.textContent = '-';
         bitrate.textContent = '-';
         error.textContent = e.message;
+        logs.textContent = '暂无日志';
+        logCount.textContent = '-';
       }
     }
 
@@ -129,6 +168,10 @@
       audio.textContent = data.audio || '-';
       bitrate.textContent = (data.video_bitrate || '-') + ' / ' + (data.maxrate || '-') + ' / ' + (data.bufsize || '-');
       error.textContent = data.last_error || '暂无';
+      const logLines = Array.isArray(data.logs) ? data.logs : [];
+      logs.textContent = logLines.length ? logLines.join('\n') : '暂无日志';
+      logCount.textContent = logLines.length ? '最近 ' + logLines.length + ' 条' : '暂无';
+      logs.scrollTop = logs.scrollHeight;
     }
 
     loadStatus();

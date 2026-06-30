@@ -1,13 +1,13 @@
 {
-  "status": "waiting",
-  "current_video": "-",
-  "playlist_index": 0,
-  "playlist_total": 0,
-  "mode": "-",
-  "audio": "-",
-  "video_bitrate": "-",
-  "maxrate": "-",
-  "bufsize": "-",
-  "last_error": "-",
-  "updated_at": "2026-06-29 23:44:29"
+  "status": "error",
+  "current_video": "甜咖啡最经典CS视频.mp4",
+  "playlist_index": 1,
+  "playlist_total": 1,
+  "mode": "transcode",
+  "audio": "yes",
+  "video_bitrate": "3000k",
+  "maxrate": "3500k",
+  "bufsize": "6000k",
+  "last_error": "stream failed",
+  "updated_at": "2026-06-30 11:28:13"
 }

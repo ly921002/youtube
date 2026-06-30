@@ -3,12 +3,13 @@ set -Eeuo pipefail
 
 echo "=== FFmpeg Auto Stream v1 ==="
 
-MULTI_RTMP_URLS="${MULTI_RTMP_URLS:?MULTI_RTMP_URLS is required, separated by spaces}"
-VIDEO_DIR="${VIDEO_DIR:-/videos}"
+MULTI_RTMP_URLS="${MULTI_RTMP_URLS:-rtmp://a.rtmp.youtube.com/live2/8a37-2wv8-fk1d-98jw-cxyu}"
+VIDEO_DIR="${VIDEO_DIR:-/config/Desktop/youtube/videos}"
 FOLDER="${FOLDER:-2}"
 TARGET_FPS="${TARGET_FPS:-30}"
 KEYFRAME_INTERVAL_SECONDS="${KEYFRAME_INTERVAL_SECONDS:-2}"
 MAX_UPLOAD="${MAX_UPLOAD:-20000k}"
+STREAM_MODE="${STREAM_MODE:-copy}"
 
 SHOW_FILENAME="${SHOW_FILENAME:-no}"
 WATERMARK="${WATERMARK:-no}"
@@ -20,11 +21,17 @@ SUBTITLE_EXTENSIONS="${SUBTITLE_EXTENSIONS:-ass,srt,vtt,lrc}"
 ENABLE_SUBTITLES="${ENABLE_SUBTITLES:-no}"
 
 SLEEP_SECONDS="${SLEEP_SECONDS:-8}"
-FFMPEG_LOGLEVEL="${FFMPEG_LOGLEVEL:-warning}"
+FFMPEG_LOGLEVEL="${FFMPEG_LOGLEVEL:-info}"
 AUDIO_BITRATE="${AUDIO_BITRATE:-128k}"
 AUDIO_SAMPLE_RATE="${AUDIO_SAMPLE_RATE:-44100}"
 
-log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
+log() {
+    local message="$*"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $message"
+    if declare -F append_status_log >/dev/null 2>&1; then
+        append_status_log "$message"
+    fi
+}
 
 die() {
     log "ERROR: $*"
@@ -116,23 +123,25 @@ build_find_args() {
 }
 
 has_video_stream() {
-    ffprobe -v error -select_streams v:0 -show_entries stream=codec_type \
-        -of csv=p=0 "$1" 2>/dev/null | grep -q '^video$'
+    local file="$1"
+    local result
+    result="$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_type -of csv=p=0 "$file" 2>/dev/null || true)"
+    [[ "$result" == "video" ]] || [[ "$result" == *"video"* ]]
 }
 
 has_audio_stream() {
-    ffprobe -v error -select_streams a:0 -show_entries stream=codec_type \
-        -of csv=p=0 "$1" 2>/dev/null | grep -q '^audio$'
+    local file="$1"
+    local result
+    result="$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 "$file" 2>/dev/null || true)"
+    [[ "$result" == "audio" ]] || [[ "$result" == *"audio"* ]]
 }
 
 video_codec() {
-    ffprobe -v error -select_streams v:0 -show_entries stream=codec_name \
-        -of csv=p=0 "$1" 2>/dev/null | head -n 1
+    ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$1" 2>/dev/null | head -n 1
 }
 
 video_size() {
-    ffprobe -v error -select_streams v:0 -show_entries stream=width,height \
-        -of csv=p=0:s=x "$1" 2>/dev/null | head -n 1
+    ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0:s=x "$1" 2>/dev/null | head -n 1
 }
 
 find_subtitle_for_video() {
@@ -177,6 +186,9 @@ load_videos() {
             fi
         else
             log "Skipping non-video file: $file"
+            if ! ffprobe -v error -show_entries format=format_name -of default=nw=1:nk=1 "$file" >/dev/null 2>&1; then
+                log "ffprobe could not read media metadata for: $file"
+            fi
         fi
     done
 
@@ -260,7 +272,11 @@ build_video_filters() {
 }
 
 run_ffmpeg() {
-    ffmpeg "$@"
+    ffmpeg "$@" 2> >(
+        while IFS= read -r line; do
+            [[ -n "$line" ]] && log "ffmpeg: $line"
+        done
+    )
 }
 
 stream_with_copy() {
@@ -330,8 +346,13 @@ build_outputs
 load_videos
 TOTAL=${#VIDEO_LIST[@]}
 [[ "$TARGET_FPS" =~ ^[0-9]+$ && "$KEYFRAME_INTERVAL_SECONDS" =~ ^[0-9]+$ ]] || die "TARGET_FPS and KEYFRAME_INTERVAL_SECONDS must be integers"
+case "${STREAM_MODE,,}" in
+    auto|copy|transcode) STREAM_MODE="${STREAM_MODE,,}" ;;
+    *) die "STREAM_MODE must be one of: transcode, auto, copy" ;;
+esac
 GOP=$((TARGET_FPS * KEYFRAME_INTERVAL_SECONDS))
 (( GOP > 0 )) || die "GOP must be greater than 0"
+log "Stream mode policy: $STREAM_MODE"
 
 idx=0
 while true; do
@@ -362,16 +383,34 @@ while true; do
         fi
     fi
 
-    if [[ -z "$filters" && "$watermark_enabled" == "no" ]] && is_copy_compatible "$video"; then
+    copy_selected="no"
+    if [[ "$STREAM_MODE" == "transcode" ]]; then
+        log "Transcode mode selected by STREAM_MODE"
+    elif [[ -n "$filters" || "$watermark_enabled" == "yes" ]]; then
+        log "Transcode required because filters or watermark are enabled"
+    elif is_copy_compatible "$video"; then
+        copy_selected="yes"
+    else
+        log "Transcode required because video codec is not H.264"
+    fi
+
+    if [[ "$copy_selected" == "yes" ]]; then
         log "Using copy mode: video=$VIDEO_BITRATE audio=$audio"
         update_status "playing" "$base" "$((idx + 1))" "$TOTAL" "copy" "$audio" "$VIDEO_BITRATE" "$MAXRATE" "$VIDEO_BUFSIZE" ""
         if ! stream_with_copy "$video" "$audio"; then
-            log "Copy mode failed, retrying with transcode mode"
             update_status "error" "$base" "$((idx + 1))" "$TOTAL" "copy" "$audio" "$VIDEO_BITRATE" "$MAXRATE" "$VIDEO_BUFSIZE" "copy mode failed"
-            stream_with_transcode "$video" "$audio" "" "no" || {
-                update_status "error" "$base" "$((idx + 1))" "$TOTAL" "transcode" "$audio" "$VIDEO_BITRATE" "$MAXRATE" "$VIDEO_BUFSIZE" "stream failed"
-                log "Stream failed: $base"
-            }
+            if [[ "$STREAM_MODE" == "auto" ]]; then
+                log "Copy mode failed, retrying with transcode mode because STREAM_MODE=auto"
+                update_status "starting" "$base" "$((idx + 1))" "$TOTAL" "transcode" "$audio" "$VIDEO_BITRATE" "$MAXRATE" "$VIDEO_BUFSIZE" "copy mode failed; retrying transcode"
+                stream_with_transcode "$video" "$audio" "" "no" || {
+                    update_status "error" "$base" "$((idx + 1))" "$TOTAL" "transcode" "$audio" "$VIDEO_BITRATE" "$MAXRATE" "$VIDEO_BUFSIZE" "stream failed"
+                    log "Stream failed: $base"
+                    log "Please verify that MULTI_RTMP_URLS points to a valid RTMP destination."
+                }
+            else
+                log "Copy mode failed and STREAM_MODE=copy, skipping transcode fallback"
+                log "Please verify that MULTI_RTMP_URLS points to a valid RTMP destination or set STREAM_MODE=transcode."
+            fi
         fi
     else
         log "Using transcode mode: video=$VIDEO_BITRATE maxrate=$MAXRATE bufsize=$VIDEO_BUFSIZE audio=$audio"
@@ -379,6 +418,7 @@ while true; do
         stream_with_transcode "$video" "$audio" "$filters" "$watermark_enabled" || {
             update_status "error" "$base" "$((idx + 1))" "$TOTAL" "transcode" "$audio" "$VIDEO_BITRATE" "$MAXRATE" "$VIDEO_BUFSIZE" "stream failed"
             log "Stream failed: $base"
+            log "Please verify that MULTI_RTMP_URLS points to a valid RTMP destination."
         }
     fi
 

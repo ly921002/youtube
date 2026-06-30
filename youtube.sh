@@ -4,7 +4,7 @@ set -Eeuo pipefail
 echo "=== FFmpeg Auto Stream v1 ==="
 
 MULTI_RTMP_URLS="${MULTI_RTMP_URLS:-?MULTI_RTMP_URLS}"
-VIDEO_DIR="${VIDEO_DIR:-/config/Desktop/youtube/videos}"
+VIDEO_DIR="${VIDEO_DIR:-/videos}"
 FOLDER="${FOLDER:-2}"
 TARGET_FPS="${TARGET_FPS:-30}"
 KEYFRAME_INTERVAL_SECONDS="${KEYFRAME_INTERVAL_SECONDS:-2}"

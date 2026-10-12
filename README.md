@@ -57,6 +57,28 @@ docker compose up -d
 
 ## 🛡 稳定性特性
 
+| 变量名 | 默认值 | 说明 |
+|-------|--------|------|
+| `STALL_TIMEOUT` | `30` | 连续多少秒无数据输出即判定为卡死并重启本次推流，`0` 关闭该检测 |
+| `FFMPEG_START_GRACE` | `30` | 启动宽限期，期间不做卡死判定（给建立 RTMP 连接留时间） |
+| `PROGRESS_INTERVAL` | `5` | 存活检测轮询间隔（秒） |
+| `RUNTIME_GRACE` | `120` | 单个视频在自身时长之外额外允许的秒数 |
+| `MAX_RUNTIME` | `0` | 单个视频最长推流秒数，`0` 表示按视频时长 + `RUNTIME_GRACE` 自动推算 |
+| `RETRY_MAX` | `3` | 单个视频失败后的重试次数（不含首次） |
+| `RETRY_BACKOFF` | `5` | 重试退避基数（秒），按 1×、2×、4× 指数递增 |
+| `RETRY_BACKOFF_MAX` | `300` | 退避上限（秒） |
+| `FFMPEG_STOP_TIMEOUT` | `10` | 优雅停止等待秒数，超时后升级为 `SIGTERM` |
+
+行为说明：
+
+- **卡死检测**：推流时通过 `ffmpeg -progress` 持续读取 `out_time_ms / total_size / frame`，
+  只要这些值不再变化且超过 `STALL_TIMEOUT`，就判定为假死并终止重启，避免整个轮播卡住。
+- **时长上限**：按 `ffprobe` 取到的视频时长 + `RUNTIME_GRACE` 作为单次推流上限，
+  即使 ffmpeg 既不退出也不报错也会被兜底结束。
+- **失败重试**：copy 模式失败自动回退 transcode 模式；仍失败则按指数退避重试，
+  超过 `RETRY_MAX` 后放弃当前视频并进入下一个。
+- **优雅退出**：收到 `SIGTERM` / `SIGINT`（如 `docker stop`）时先向 ffmpeg 发 `SIGINT`
+  让它写完 FLV trailer 再退出，避免平台侧看到异常断流。
 - Bash `set -euo pipefail` 错误处理
 - COPY 失败自动转码回退
 - `ffprobe` 视频轨道检测

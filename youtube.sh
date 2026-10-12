@@ -24,6 +24,17 @@ FFMPEG_LOGLEVEL="${FFMPEG_LOGLEVEL:-warning}"
 AUDIO_BITRATE="${AUDIO_BITRATE:-128k}"
 AUDIO_SAMPLE_RATE="${AUDIO_SAMPLE_RATE:-44100}"
 
+# ===== 稳定性相关配置 =====
+STALL_TIMEOUT="${STALL_TIMEOUT:-30}"              # 连续多少秒无数据输出判定为卡死（0=关闭检测）
+FFMPEG_START_GRACE="${FFMPEG_START_GRACE:-30}"    # 启动宽限期，期间不做卡死判定
+PROGRESS_INTERVAL="${PROGRESS_INTERVAL:-5}"       # 存活检测轮询间隔（秒）
+RUNTIME_GRACE="${RUNTIME_GRACE:-120}"             # 单个视频在自身时长之外额外允许的秒数
+MAX_RUNTIME="${MAX_RUNTIME:-0}"                   # 单个视频最长推流秒数，0=按时长自动推算
+RETRY_MAX="${RETRY_MAX:-3}"                       # 单个视频失败后的重试次数（不含首次）
+RETRY_BACKOFF="${RETRY_BACKOFF:-5}"               # 重试退避基数（秒），指数递增
+RETRY_BACKOFF_MAX="${RETRY_BACKOFF_MAX:-300}"     # 退避上限（秒）
+FFMPEG_STOP_TIMEOUT="${FFMPEG_STOP_TIMEOUT:-10}"  # 优雅停止等待秒数，超时后升级为 SIGTERM
+
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
 die() {
@@ -52,6 +63,19 @@ escape_filter_text() {
 escape_filter_path() {
     printf '%s' "$1" | sed "s/\\\\/\\\\\\\\/g;s/'/\\\\'/g;s/:/\\\\:/g"
 }
+
+# 当前 ffmpeg 子进程 pid，供信号处理使用
+FF_PID=""
+
+graceful_stop() {
+    log "收到停止信号，正在结束当前推流..."
+    if [[ -n "$FF_PID" ]] && kill -0 "$FF_PID" 2>/dev/null; then
+        terminate_ffmpeg "$FF_PID"
+    fi
+    exit 0
+}
+
+trap graceful_stop TERM INT
 
 sort_videos() {
     awk '
@@ -108,6 +132,46 @@ video_codec() {
 video_size() {
     ffprobe -v error -select_streams v:0 -show_entries stream=width,height \
         -of csv=p=0:s=x "$1" 2>/dev/null | head -n 1
+}
+
+video_duration() {
+    ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$1" 2>/dev/null | head -n 1
+}
+
+# 从 ffmpeg -progress 输出中提取进度指纹：只要它在变，就说明还在往外发数据
+progress_marker() {
+    local file="$1"
+    [[ -f "$file" ]] || return 0
+    awk -F= '/^(out_time_ms|total_size|frame)=/ { printf "%s=%s;", $1, $2 }' "$file" 2>/dev/null
+}
+
+# 先 SIGINT 让 ffmpeg 收尾写 trailer，超时再 SIGTERM
+terminate_ffmpeg() {
+    local pid="$1"
+    local waited=0
+    kill -INT "$pid" 2>/dev/null || true
+    while (( waited < FFMPEG_STOP_TIMEOUT )); do
+        kill -0 "$pid" 2>/dev/null || return 0
+        sleep 1
+        waited=$((waited + 1))
+    done
+    kill -TERM "$pid" 2>/dev/null || true
+}
+
+# 计算单个视频的最大推流时长，防止 ffmpeg 假死后无限挂起
+compute_runtime_limit() {
+    local duration int_duration
+    if (( MAX_RUNTIME > 0 )); then
+        printf '%s' "$MAX_RUNTIME"
+        return 0
+    fi
+    duration="$(video_duration "$1")"
+    if [[ "$duration" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        int_duration="${duration%%.*}"
+        printf '%s' "$((int_duration + RUNTIME_GRACE))"
+    else
+        printf '0'
+    fi
 }
 
 find_subtitle_for_video() {
@@ -192,6 +256,8 @@ build_outputs() {
     OUTPUT_ARGS=()
     local url count=0 tee_output="" last_url=""
 
+    # 空格分隔多个推流地址，此处需要刻意分词
+    # shellcheck disable=SC2086
     for url in $MULTI_RTMP_URLS; do
         [[ -z "$url" ]] && continue
         if [[ $count -eq 0 ]]; then
@@ -234,13 +300,65 @@ build_video_filters() {
     printf '%s' "${filters[*]}"
 }
 
+# 返回值：0=正常结束；124=判定卡死被终止；125=达到时长上限被终止；其他=ffmpeg 自身退出码
+# 用法：run_ffmpeg <本次最长允许秒数,0 表示不限> <ffmpeg 参数...>
 run_ffmpeg() {
-    ffmpeg "$@"
+    local limit="$1"
+    shift
+    local progress_file pid rc=0 ffmpeg_rc=0 elapsed=0 stalled=0
+    local marker="" last_marker=""
+
+    progress_file="$(mktemp "${TMPDIR:-/tmp}/ffmpeg-progress.XXXXXX")"
+    rm -f "$progress_file"
+
+    ffmpeg -nostdin -progress "$progress_file" "$@" &
+    pid=$!
+    FF_PID="$pid"
+
+    while kill -0 "$pid" 2>/dev/null; do
+        sleep "$PROGRESS_INTERVAL"
+        kill -0 "$pid" 2>/dev/null && elapsed=$((elapsed + PROGRESS_INTERVAL))
+
+        marker="$(progress_marker "$progress_file")"
+        if [[ -z "$marker" ]]; then
+            stalled=0
+        elif [[ "$marker" == "$last_marker" ]]; then
+            stalled=$((stalled + PROGRESS_INTERVAL))
+        else
+            stalled=0
+            last_marker="$marker"
+        fi
+
+        if (( STALL_TIMEOUT > 0 && elapsed > FFMPEG_START_GRACE && stalled >= STALL_TIMEOUT )); then
+            log "推流已 ${stalled}s 没有数据输出，判定为卡死，准备重启本次推流"
+            rc=124
+            break
+        fi
+
+        if (( limit > 0 && elapsed >= limit )); then
+            log "已达到本视频最大推流时长 ${limit}s，主动结束"
+            rc=125
+            break
+        fi
+    done
+
+    if (( rc != 0 )); then
+        terminate_ffmpeg "$pid"
+    fi
+    wait "$pid" 2>/dev/null || ffmpeg_rc=$?
+    FF_PID=""
+    rm -f "$progress_file"
+
+    if (( rc == 0 )); then
+        rc="$ffmpeg_rc"
+    fi
+    return "$rc"
 }
 
 stream_with_copy() {
     local video="$1"
     local has_audio="$2"
+    local limit="$3"
     local -a args
 
     args=(-loglevel "$FFMPEG_LOGLEVEL" -re -i "$video")
@@ -251,14 +369,15 @@ stream_with_copy() {
         args+=(-map 0:v:0 -map 1:a:0 -c:v copy -c:a aac -b:a "$AUDIO_BITRATE" -shortest)
     fi
 
-    run_ffmpeg "${args[@]}" "${OUTPUT_ARGS[@]}"
+    run_ffmpeg "$limit" "${args[@]}" "${OUTPUT_ARGS[@]}"
 }
 
 stream_with_transcode() {
     local video="$1"
     local has_audio="$2"
-    local filters="$3"
+    local video_filters="$3"
     local use_watermark="$4"
+    local limit="$5"
     local -a inputs common map_args filter_args
 
     inputs=(-re -i "$video")
@@ -286,18 +405,18 @@ stream_with_transcode() {
     fi
 
     if [[ "$use_watermark" == "yes" ]]; then
-        if [[ -n "$filters" ]]; then
-            filter_args=(-filter_complex "[0:v]${filters}[base];[base][1:v]overlay=10:10[vout]")
+        if [[ -n "$video_filters" ]]; then
+            filter_args=(-filter_complex "[0:v]${video_filters}[base];[base][1:v]overlay=10:10[vout]")
         else
             filter_args=(-filter_complex "[0:v][1:v]overlay=10:10[vout]")
         fi
-    elif [[ -n "$filters" ]]; then
-        filter_args=(-filter_complex "[0:v]${filters}[vout]")
+    elif [[ -n "$video_filters" ]]; then
+        filter_args=(-filter_complex "[0:v]${video_filters}[vout]")
     else
         filter_args=(-filter_complex "[0:v]null[vout]")
     fi
 
-    run_ffmpeg -loglevel "$FFMPEG_LOGLEVEL" "${inputs[@]}" "${filter_args[@]}" \
+    run_ffmpeg "$limit" -loglevel "$FFMPEG_LOGLEVEL" "${inputs[@]}" "${filter_args[@]}" \
         "${map_args[@]}" "${common[@]}" "${OUTPUT_ARGS[@]}"
 }
 
@@ -305,6 +424,12 @@ build_outputs
 load_videos
 TOTAL=${#VIDEO_LIST[@]}
 [[ "$TARGET_FPS" =~ ^[0-9]+$ && "$KEYFRAME_INTERVAL_SECONDS" =~ ^[0-9]+$ ]] || die "TARGET_FPS and KEYFRAME_INTERVAL_SECONDS must be integers"
+
+for stability_var in STALL_TIMEOUT FFMPEG_START_GRACE PROGRESS_INTERVAL RUNTIME_GRACE \
+    MAX_RUNTIME RETRY_MAX RETRY_BACKOFF RETRY_BACKOFF_MAX FFMPEG_STOP_TIMEOUT; do
+    [[ "${!stability_var}" =~ ^[0-9]+$ ]] || die "$stability_var must be a non-negative integer (got '${!stability_var}')"
+done
+
 GOP=$((TARGET_FPS * KEYFRAME_INTERVAL_SECONDS))
 (( GOP > 0 )) || die "GOP must be greater than 0"
 
@@ -326,7 +451,7 @@ while true; do
     audio="no"
     has_audio_stream "$video" && audio="yes"
 
-    filters="$(build_video_filters "$video" "$base")"
+    video_filters="$(build_video_filters "$video" "$base")"
     watermark_enabled="no"
     if is_yes "$WATERMARK"; then
         if [[ -f "$WATERMARK_IMG" ]]; then
@@ -336,16 +461,60 @@ while true; do
         fi
     fi
 
-    if [[ -z "$filters" && "$watermark_enabled" == "no" ]] && is_copy_compatible "$video"; then
-        log "Using copy mode: video=$VIDEO_BITRATE audio=$audio"
-        if ! stream_with_copy "$video" "$audio"; then
-            log "Copy mode failed, retrying with transcode mode"
-            stream_with_transcode "$video" "$audio" "" "no" || log "Stream failed: $base"
-        fi
-    else
-        log "Using transcode mode: video=$VIDEO_BITRATE maxrate=$MAXRATE bufsize=$VIDEO_BUFSIZE audio=$audio"
-        stream_with_transcode "$video" "$audio" "$filters" "$watermark_enabled" || log "Stream failed: $base"
+    limit="$(compute_runtime_limit "$video")"
+    if (( limit > 0 )); then
+        log "Runtime limit for this video: ${limit}s"
     fi
+
+    attempt=0
+    force_transcode=0
+    while true; do
+        use_copy=0
+        if (( force_transcode == 0 )) && [[ -z "$video_filters" && "$watermark_enabled" == "no" ]] \
+            && is_copy_compatible "$video"; then
+            use_copy=1
+        fi
+
+        rc=0
+        if (( use_copy == 1 )); then
+            log "Using copy mode: video=$VIDEO_BITRATE audio=$audio (第 $((attempt + 1)) 次尝试)"
+            stream_with_copy "$video" "$audio" "$limit" || rc=$?
+            if (( rc == 0 )); then
+                break
+            fi
+            if (( rc == 125 )); then
+                log "已在时长上限处结束本视频，继续下一个"
+                break
+            fi
+            log "Copy mode failed (rc=$rc), retrying with transcode mode"
+            force_transcode=1
+            continue
+        else
+            log "Using transcode mode: video=$VIDEO_BITRATE maxrate=$MAXRATE bufsize=$VIDEO_BUFSIZE audio=$audio (第 $((attempt + 1)) 次尝试)"
+            stream_with_transcode "$video" "$audio" "$video_filters" "$watermark_enabled" "$limit" || rc=$?
+        fi
+
+        if (( rc == 0 )); then
+            break
+        fi
+        if (( rc == 125 )); then
+            log "已在时长上限处结束本视频，继续下一个"
+            break
+        fi
+
+        attempt=$((attempt + 1))
+        if (( attempt > RETRY_MAX )); then
+            log "Stream failed after $RETRY_MAX retry(s), giving up: $base"
+            break
+        fi
+
+        delay=$((RETRY_BACKOFF * (2 ** (attempt - 1))))
+        if (( delay > RETRY_BACKOFF_MAX )); then
+            delay="$RETRY_BACKOFF_MAX"
+        fi
+        log "推流中断 (rc=$rc)，${delay}s 后进行第 $attempt 次重试：$base"
+        sleep "$delay"
+    done
 
     sleep "$SLEEP_SECONDS"
 

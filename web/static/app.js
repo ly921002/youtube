@@ -92,12 +92,16 @@
       dom.mode.textContent = mode;
     }
 
+    // 断点续播：resume_offset 是暂停时记录的位置，展示时要加上，进度条才对得上
+    var offset = parseInt(data.resume_offset, 10) || 0;
     var elapsed = parseInt(data.elapsed_seconds, 10) || 0;
     var limit = parseInt(data.limit_seconds, 10) || 0;
-    dom.timing.textContent = limit > 0
-      ? formatDuration(elapsed) + " / " + formatDuration(limit)
-      : formatDuration(elapsed);
-    dom.progressBar.style.width = (limit > 0 ? Math.min(100, (elapsed / limit) * 100) : 0) + "%";
+    var totalElapsed = offset + elapsed;
+    var totalLimit = offset + limit;
+    dom.timing.textContent = (offset > 0 ? "断点 " + formatDuration(offset) + " + " : "")
+      + formatDuration(elapsed)
+      + (limit > 0 ? " / " + formatDuration(totalLimit) : "");
+    dom.progressBar.style.width = (totalLimit > 0 ? Math.min(100, (totalElapsed / totalLimit) * 100) : 0) + "%";
 
     dom.bitrate.textContent = data.video_bitrate || "—";
     dom.rtmpCount.textContent = (data.rtmp_count || 0) + " 路";

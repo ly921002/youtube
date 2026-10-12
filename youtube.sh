@@ -78,6 +78,10 @@ escape_filter_path() {
 FF_PID=""
 APP_START_TIME="$(date +%s)"
 VIDEO_LIST=()
+# 断点续播：本轮推流的起始位置（秒），>0 时给 ffmpeg 加 -ss
+SEEK_OFFSET=0
+# 暂停时记录下来的播放位置（秒），resume 时作为 -ss 的起点
+RESUME_POSITION=0
 
 # 供 Web 面板读取的运行时状态
 STATUS_STATE="starting"
@@ -243,6 +247,7 @@ write_status() {
         printf '  "mode": "%s",\n' "$(json_escape "$STATUS_MODE")"
         printf '  "video_bitrate": "%s",\n' "$(json_escape "${VIDEO_BITRATE:-}")"
         printf '  "elapsed_seconds": %s,\n' "$STATUS_ELAPSED"
+        printf '  "resume_offset": %s,\n' "$SEEK_OFFSET"
         printf '  "limit_seconds": %s,\n' "$STATUS_LIMIT"
         printf '  "started_at": "%s",\n' "$(json_escape "$STATUS_STARTED_AT")"
         printf '  "updated_at": "%s",\n' "$now"
@@ -307,11 +312,15 @@ process_commands() {
             next | skip)
                 consume_command
                 log "收到控制指令：跳到下一个"
+                SEEK_OFFSET=0
+                RESUME_POSITION=0
                 step_index 1
                 ;;
             prev)
                 consume_command
                 log "收到控制指令：回到上一个"
+                SEEK_OFFSET=0
+                RESUME_POSITION=0
                 step_index -1
                 ;;
             rescan)
@@ -320,6 +329,8 @@ process_commands() {
                 ;;
             pause)
                 consume_command
+                # 还没开始播就暂停，恢复时从头开始
+                RESUME_POSITION=0
                 pause_until_resume
                 ;;
             stop)
@@ -371,7 +382,13 @@ pause_until_resume() {
         case "$PENDING_COMMAND" in
             resume)
                 consume_command
-                log "收到控制指令：恢复推流，重新播放当前视频"
+                if (( RESUME_POSITION > 0 )); then
+                    log "收到控制指令：恢复推流，从断点 ${RESUME_POSITION}s 继续播放"
+                else
+                    log "收到控制指令：恢复推流，从头播放当前视频"
+                fi
+                SEEK_OFFSET="$RESUME_POSITION"
+                RESUME_POSITION=0
                 STATUS_STATE="idle"
                 write_status
                 return 0
@@ -379,6 +396,8 @@ pause_until_resume() {
             next | skip)
                 consume_command
                 log "收到控制指令：跳到下一个"
+                SEEK_OFFSET=0
+                RESUME_POSITION=0
                 step_index 1
                 STATUS_STATE="idle"
                 write_status
@@ -387,6 +406,8 @@ pause_until_resume() {
             prev)
                 consume_command
                 log "收到控制指令：回到上一个"
+                SEEK_OFFSET=0
+                RESUME_POSITION=0
                 step_index -1
                 STATUS_STATE="idle"
                 write_status
@@ -607,7 +628,9 @@ run_ffmpeg() {
                 ;;
             pause)
                 consume_command
-                log "收到控制指令：立即暂停当前推流"
+                # 记下断点：本轮已播秒数 + 本轮的起始偏移，resume 时从这里继续
+                RESUME_POSITION=$((SEEK_OFFSET + elapsed))
+                log "收到控制指令：立即暂停当前推流（断点 ${RESUME_POSITION}s）"
                 rc=128
                 break
                 ;;
@@ -667,13 +690,19 @@ run_ffmpeg() {
     return "$rc"
 }
 
+# 断点续播：SEEK_OFFSET>0 时在输入文件前插入 -ss（输入侧定位，走关键帧）
 stream_with_copy() {
     local video="$1"
     local has_audio="$2"
     local limit="$3"
     local -a args
 
-    args=(-loglevel "$FFMPEG_LOGLEVEL" -re -i "$video")
+    args=(-loglevel "$FFMPEG_LOGLEVEL" -re)
+    # 断点续播：-ss 必须放在 -i 之前（输入侧定位，走关键帧）
+    if (( SEEK_OFFSET > 0 )); then
+        args+=(-ss "$SEEK_OFFSET")
+    fi
+    args+=(-i "$video")
     if [[ "$has_audio" == "yes" ]]; then
         args+=(-map 0:v:0 -map 0:a:0 -c:v copy -c:a aac -b:a "$AUDIO_BITRATE")
     else
@@ -692,7 +721,12 @@ stream_with_transcode() {
     local limit="$5"
     local -a inputs common map_args filter_args
 
-    inputs=(-re -i "$video")
+    inputs=(-re)
+    # 断点续播：-ss 必须放在 -i 之前（输入侧定位，走关键帧）
+    if (( SEEK_OFFSET > 0 )); then
+        inputs+=(-ss "$SEEK_OFFSET")
+    fi
+    inputs+=(-i "$video")
     if [[ "$use_watermark" == "yes" ]]; then
         inputs+=(-i "$WATERMARK_IMG")
     fi
@@ -795,6 +829,12 @@ while true; do
     fi
 
     limit="$(compute_runtime_limit "$video")"
+    if (( SEEK_OFFSET > 0 )); then
+        # 断点续播：剩余可推时长要扣掉已经播过的部分
+        limit=$((limit - SEEK_OFFSET))
+        (( limit >= 10 )) || limit=10
+        log "从断点 ${SEEK_OFFSET}s 继续，本轮剩余时长上限 ${limit}s"
+    fi
     STATUS_LIMIT="$limit"
     if (( limit > 0 )); then
         log "Runtime limit for this video: ${limit}s"
@@ -879,7 +919,8 @@ while true; do
         sleep "$delay"
     done
 
-    # rc=128 表示播放中被暂停：先停流等待 resume，恢复后重播当前视频
+    # rc=128 表示播放中被暂停：先停流等待 resume，
+    # pause_until_resume 会在 resume 时把断点写进 SEEK_OFFSET，下一轮从断点继续
     if (( rc == 128 )); then
         pause_until_resume
     fi
@@ -890,10 +931,14 @@ while true; do
     sleep "$SLEEP_SECONDS"
 
     case "$rc" in
-        128) ;;                 # 暂停恢复后重播当前视频，下标不动
+        128) ;;                 # 暂停恢复后从断点重播当前视频，下标不动、断点保留
         129) step_index -1 ;;   # 切上一个
         *)   step_index 1 ;;
     esac
+    if [[ $rc -ne 128 ]]; then
+        SEEK_OFFSET=0
+        RESUME_POSITION=0
+    fi
     if [[ $idx -eq 0 ]]; then
         if ! load_videos; then
             log "重新扫描未找到可播放视频，沿用上一次的列表"

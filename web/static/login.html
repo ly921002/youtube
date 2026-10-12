@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>登录 · 直播推流控制面板</title>
+<link rel="stylesheet" href="/login.css" />
+</head>
+<body>
+<div class="box">
+  <h1>直播推流控制面板</h1>
+  <p class="sub">请登录后继续</p>
+  <form id="form" autocomplete="on">
+    <label for="username">用户名</label>
+    <input id="username" name="username" type="text" autocomplete="username" required />
+    <label for="password">密码</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required />
+    <button id="submitBtn" type="submit">登录</button>
+    <p class="err" id="error"></p>
+  </form>
+</div>
+<script src="/login.js"></script>
+</body>
+</html>

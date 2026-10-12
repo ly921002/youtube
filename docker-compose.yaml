@@ -1,23 +1,39 @@
-version: '3'
-
 services:
   ffmpegstream:
-    image: ly920907/ffmpeg-autostream:latest
+    # 也可换成 Docker Hub 镜像：ly920907/ffmpeg-autostream:latest
+    image: ghcr.io/ly921002/ffmpeg-autostream:latest
     container_name: ffmpeg-streamer
     restart: always
-    
-    # 低延迟 RTMP：推荐 host network（Linux Only）
-    network_mode: host
-    
+
     environment:
       MULTI_RTMP_URLS: "rtmp://a.rtmp.youtube.com/live2/直播码"
-      FONT_FILE: "/usr/share/fonts/noto/NotoSansCJK-Regular.ttc" 
-      SLEEP_SECONDS: "5" 
-      SHOW_FILENAME: "no" #默认copy模式，yes开启转码模式，显示当前播放文件名
-      WATERMARK: "no" #默认copy模式，yes开启转码模式，显示水印
-      WATERMARK_IMG: "" #水印路径
+      FONT_FILE: "/usr/share/fonts/noto/NotoSansCJK-Regular.ttc"
+      SLEEP_SECONDS: "5"
+      SHOW_FILENAME: "no" # 默认 copy 模式；yes 开启转码模式并显示当前播放文件名
+      WATERMARK: "no" # 默认 copy 模式；yes 开启转码模式并显示水印
+      WATERMARK_IMG: "" # 水印路径
+
+      # ---- 控制面板 ----
+      STATUS_ENABLED: "yes"
+      PORT: "8080"
+      # 默认只监听容器本机，配合下面的 127.0.0.1 端口映射，只有宿主机能访问。
+      # 需要局域网/公网访问时：WEB_HOST 改 0.0.0.0、端口映射去掉 127.0.0.1 前缀，
+      # 并且必须设置 WEB_USER / WEB_PASSWORD。
+      WEB_HOST: "127.0.0.1"
+      WEB_USER: "admin"
+      WEB_PASSWORD: "change-me" # 务必修改
+
+      # ---- 稳定性（详见 README）----
+      # STALL_TIMEOUT: "30"
+      # RETRY_MAX: "3"
+      # RETRY_BACKOFF: "5"
+
     volumes:
       - /home/ubuntu/videos:/videos
+      - stream-status:/app/status
+
+    ports:
+      - "127.0.0.1:8080:8080"
 
     # 限制 docker logs（否则 FFmpeg 会刷爆日志）
     logging:
@@ -25,3 +41,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  stream-status:

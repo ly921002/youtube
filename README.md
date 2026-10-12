@@ -88,6 +88,56 @@ docker compose up -d
 - Docker 自动重启机制
 
 
+## 🖥 Web 控制面板
+
+推流脚本会把运行状态原子写入 `/app/status/status.json`，面板读取该文件展示；
+控制指令则是面板往 `/app/status/commands/` 写一个 `<时间戳>.<动作>` 文件，由脚本消费后删除。
+两者完全解耦，脚本不依赖面板也能正常运行。
+
+### 功能
+
+- 实时状态：当前播放文件、序号、推流模式（COPY / TRANSCODE）、已播时长 / 上限、码率、推流路数、ffmpeg PID、运行时长
+- 远程控制：下一个 / 上一个 / 暂停 / 恢复 / 重新扫描视频目录 / 停止推流
+- 推流地址自动打码，只显示到 `rtmp://host/path/****`，不会泄露推流码
+- 登录鉴权：HMAC-SHA256 签名 Cookie（`HttpOnly` + `SameSite=Strict`）、同 IP 失败限流、进程重启后旧会话失效
+
+### 访问方式
+
+默认只监听容器 `127.0.0.1`，compose 里也只映射到宿主机 `127.0.0.1:8080`，因此需通过 SSH 隧道访问：
+
+```bash
+ssh -L 8080:127.0.0.1:8080 user@your-vps
+# 浏览器打开 http://127.0.0.1:8080
+```
+
+需要局域网或公网直接访问时：把 `WEB_HOST` 改成 `0.0.0.0`、端口映射去掉 `127.0.0.1` 前缀，
+**并且必须设置 `WEB_USER` / `WEB_PASSWORD`**（未设置密码时服务会拒绝绑定到非本机地址）。
+
+### 新增环境变量
+
+| 变量名 | 默认值 | 说明 |
+|-------|--------|------|
+| `STATUS_ENABLED` | `yes` | 是否启用状态输出与面板，`no` 则完全关闭 |
+| `STATUS_DIR` | `/app/status` | 状态与指令目录 |
+| `PORT` | `8080` | 面板监听端口 |
+| `WEB_HOST` | `127.0.0.1` | 面板监听地址 |
+| `WEB_USER` | 空 | 登录用户名（与密码同时设置才启用鉴权） |
+| `WEB_PASSWORD` | 空 | 登录密码 |
+
+### HTTP 接口
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/` | 面板页面（未登录跳转 `/login.html`） |
+| GET | `/api/status` | 当前推流状态 JSON |
+| POST | `/api/login` | 登录，body `{"username":"","password":""}` |
+| POST | `/api/logout` | 登出 |
+| POST | `/api/control` | 下发指令，body `{"action":"next"}` |
+| GET | `/api/ping` | 探活，返回是否启用鉴权 |
+
+`action` 可选：`next`、`prev`、`pause`、`resume`、`rescan`、`stop`。
+其中 `stop` 会结束脚本进程，需要容器配置 `restart: always` 才会自动拉起。
+
 ## 📜 许可证
 
 MIT License

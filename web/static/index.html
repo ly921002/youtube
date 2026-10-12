@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>直播推流控制面板</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>直播推流控制面板</h1>
+      <div class="sub" id="uptime">连接中…</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span class="badge" id="badge"><span class="dot"></span><span id="badgeText">加载中</span></span>
+      <button id="logoutBtn" type="button">退出</button>
+    </div>
+  </header>
+
+  <div class="toast" id="toast"></div>
+
+  <div class="card">
+    <div class="np-label">当前播放</div>
+    <div class="np-file" id="currentFile">—</div>
+    <div class="bar"><span id="progressBar"></span></div>
+    <div class="grid">
+      <div class="metric"><div class="k">播放序号</div><div class="v" id="position">—</div></div>
+      <div class="metric"><div class="k">推流模式</div><div class="v" id="mode">—</div></div>
+      <div class="metric"><div class="k">已播 / 上限</div><div class="v" id="timing">—</div></div>
+      <div class="metric"><div class="k">视频码率</div><div class="v" id="bitrate">—</div></div>
+      <div class="metric"><div class="k">推流目标</div><div class="v" id="rtmpCount">—</div></div>
+      <div class="metric"><div class="k">ffmpeg PID</div><div class="v" id="pid">—</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="np-label">推流目标（推流码已打码）</div>
+    <ul class="targets" id="targets"><li>—</li></ul>
+  </div>
+
+  <div class="card">
+    <div class="np-label">控制</div>
+    <div class="actions" style="margin-top:12px;">
+      <button class="primary" type="button" data-action="next">下一个</button>
+      <button type="button" data-action="prev">上一个</button>
+      <button type="button" data-action="pause">暂停</button>
+      <button type="button" data-action="resume">恢复</button>
+      <button type="button" data-action="rescan">重新扫描</button>
+      <button class="danger" type="button" data-action="stop">停止推流</button>
+    </div>
+    <div class="footer" style="text-align:left;margin-top:14px;">
+      「停止推流」会结束脚本进程，靠容器的 restart 策略自动拉起
+    </div>
+  </div>
+
+  <div class="card" id="errorCard" style="display:none;">
+    <div class="np-label">最近错误</div>
+    <div class="err" id="lastError"></div>
+  </div>
+
+  <div class="footer" id="updatedAt">—</div>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -35,6 +35,12 @@ RETRY_BACKOFF="${RETRY_BACKOFF:-5}"               # 重试退避基数（秒）�
 RETRY_BACKOFF_MAX="${RETRY_BACKOFF_MAX:-300}"     # 退避上限（秒）
 FFMPEG_STOP_TIMEOUT="${FFMPEG_STOP_TIMEOUT:-10}"  # 优雅停止等待秒数，超时后升级为 SIGTERM
 
+# ===== Web 控制面板相关配置 =====
+STATUS_ENABLED="${STATUS_ENABLED:-yes}"
+STATUS_DIR="${STATUS_DIR:-/app/status}"
+STATUS_FILE="${STATUS_FILE:-$STATUS_DIR/status.json}"
+COMMAND_DIR="${COMMAND_DIR:-$STATUS_DIR/commands}"
+
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
 die() {
@@ -66,6 +72,20 @@ escape_filter_path() {
 
 # 当前 ffmpeg 子进程 pid，供信号处理使用
 FF_PID=""
+APP_START_TIME="$(date +%s)"
+
+# 供 Web 面板读取的运行时状态
+STATUS_STATE="starting"
+STATUS_CURRENT=""
+STATUS_INDEX=0
+STATUS_TOTAL=0
+STATUS_MODE="unknown"
+STATUS_LIMIT=0
+STATUS_ELAPSED=0
+STATUS_STARTED_AT=""
+STATUS_LAST_ERROR=""
+RTMP_TARGETS_MASKED=()
+PENDING_COMMAND=""
 
 graceful_stop() {
     log "收到停止信号，正在结束当前推流..."
@@ -174,6 +194,124 @@ compute_runtime_limit() {
     fi
 }
 
+# ---------------------------------------------------------------- 状态与指令
+
+json_escape() {
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    value="${value//$'\r'/}"
+    value="${value//$'\t'/\\t}"
+    value="${value//$'\n'/\\n}"
+    printf '%s' "$value"
+}
+
+# 推流地址含推流码，不能原样暴露给前端
+mask_rtmp() {
+    printf '%s/****' "${1%/*}"
+}
+
+# 原子写入状态文件：先写临时文件再 mv，避免前端读到半个 JSON
+write_status() {
+    is_yes "$STATUS_ENABLED" || return 0
+    local now tmp targets="" item
+    now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    mkdir -p "$STATUS_DIR" 2>/dev/null || return 0
+
+    for item in ${RTMP_TARGETS_MASKED[@]+"${RTMP_TARGETS_MASKED[@]}"}; do
+        [[ -n "$item" ]] || continue
+        if [[ -z "$targets" ]]; then
+            targets="\"$(json_escape "$item")\""
+        else
+            targets="$targets,\"$(json_escape "$item")\""
+        fi
+    done
+
+    tmp="$(mktemp "${STATUS_DIR}/.status.XXXXXX" 2>/dev/null)" || return 0
+    {
+        printf '{\n'
+        printf '  "state": "%s",\n' "$(json_escape "$STATUS_STATE")"
+        printf '  "current_file": "%s",\n' "$(json_escape "$STATUS_CURRENT")"
+        printf '  "current_index": %s,\n' "$STATUS_INDEX"
+        printf '  "total_videos": %s,\n' "$STATUS_TOTAL"
+        printf '  "mode": "%s",\n' "$(json_escape "$STATUS_MODE")"
+        printf '  "video_bitrate": "%s",\n' "$(json_escape "${VIDEO_BITRATE:-}")"
+        printf '  "elapsed_seconds": %s,\n' "$STATUS_ELAPSED"
+        printf '  "limit_seconds": %s,\n' "$STATUS_LIMIT"
+        printf '  "started_at": "%s",\n' "$(json_escape "$STATUS_STARTED_AT")"
+        printf '  "updated_at": "%s",\n' "$now"
+        printf '  "uptime_seconds": %s,\n' "$(( $(date +%s) - APP_START_TIME ))"
+        printf '  "ffmpeg_pid": %s,\n' "${FF_PID:-0}"
+        printf '  "rtmp_count": %s,\n' "${#RTMP_TARGETS_MASKED[@]}"
+        printf '  "rtmp_targets": [%s],\n' "$targets"
+        printf '  "last_error": "%s"\n' "$(json_escape "$STATUS_LAST_ERROR")"
+        printf '}\n'
+    } >"$tmp"
+    mv -f "$tmp" "$STATUS_FILE" 2>/dev/null || rm -f "$tmp"
+}
+
+# 从指令目录取一条待处理指令（文件名按时间戳排序，处理完即删除）
+check_command() {
+    PENDING_COMMAND=""
+    is_yes "$STATUS_ENABLED" || return 0
+    [[ -d "$COMMAND_DIR" ]] || return 0
+    local file cmd
+    for file in "$COMMAND_DIR"/*; do
+        [[ -f "$file" ]] || continue
+        cmd="$(tr -d '[:space:]' <"$file" 2>/dev/null)"
+        rm -f "$file" 2>/dev/null || true
+        [[ -n "$cmd" ]] || continue
+        PENDING_COMMAND="$cmd"
+        return 0
+    done
+}
+
+# 视频间隔期间处理控制指令，可能修改 idx / TOTAL，也可能暂停或退出
+process_commands() {
+    is_yes "$STATUS_ENABLED" || return 0
+    local cmd
+    while true; do
+        check_command
+        cmd="$PENDING_COMMAND"
+        case "$cmd" in
+            "")
+                return 0
+                ;;
+            next | skip)
+                log "收到控制指令：跳到下一个"
+                idx=$(((idx + 1) % TOTAL))
+                ;;
+            prev)
+                log "收到控制指令：回到上一个"
+                idx=$(((idx - 1 + TOTAL) % TOTAL))
+                ;;
+            rescan)
+                log "收到控制指令：重新扫描视频目录"
+                load_videos
+                TOTAL=${#VIDEO_LIST[@]}
+                (( idx < TOTAL )) || idx=0
+                ;;
+            pause)
+                log "收到控制指令：暂停（等待 resume）"
+                STATUS_STATE="paused"
+                write_status
+                while true; do
+                    sleep 2
+                    check_command
+                    case "$PENDING_COMMAND" in
+                        resume) log "收到控制指令：恢复"; break ;;
+                        next | skip) log "收到控制指令：跳到下一个"; idx=$(((idx + 1) % TOTAL)); break ;;
+                        stop) graceful_stop ;;
+                    esac
+                done
+                ;;
+            stop)
+                graceful_stop
+                ;;
+        esac
+    done
+}
+
 find_subtitle_for_video() {
     local video="$1"
     local video_base="${video%.*}"
@@ -254,6 +392,7 @@ is_copy_compatible() {
 
 build_outputs() {
     OUTPUT_ARGS=()
+    RTMP_TARGETS_MASKED=()
     local url count=0 tee_output="" last_url=""
 
     # 空格分隔多个推流地址，此处需要刻意分词
@@ -266,6 +405,7 @@ build_outputs() {
             tee_output="$tee_output|[f=flv:onfail=ignore]$url"
         fi
         last_url="$url"
+        RTMP_TARGETS_MASKED+=("$(mask_rtmp "$url")")
         count=$((count + 1))
     done
 
@@ -314,10 +454,28 @@ run_ffmpeg() {
     ffmpeg -nostdin -progress "$progress_file" "$@" &
     pid=$!
     FF_PID="$pid"
+    STATUS_STATE="streaming"
+    STATUS_ELAPSED=0
+    write_status
 
     while kill -0 "$pid" 2>/dev/null; do
         sleep "$PROGRESS_INTERVAL"
         kill -0 "$pid" 2>/dev/null && elapsed=$((elapsed + PROGRESS_INTERVAL))
+
+        # 播放中也能响应“下一个 / 停止”
+        check_command
+        case "$PENDING_COMMAND" in
+            next | skip)
+                log "收到控制指令：立即跳到下一个"
+                rc=126
+                break
+                ;;
+            stop)
+                log "收到控制指令：停止推流"
+                rc=127
+                break
+                ;;
+        esac
 
         marker="$(progress_marker "$progress_file")"
         if [[ -z "$marker" ]]; then
@@ -340,6 +498,9 @@ run_ffmpeg() {
             rc=125
             break
         fi
+
+        STATUS_ELAPSED="$elapsed"
+        write_status
     done
 
     if (( rc != 0 )); then
@@ -423,6 +584,12 @@ stream_with_transcode() {
 build_outputs
 load_videos
 TOTAL=${#VIDEO_LIST[@]}
+
+if is_yes "$STATUS_ENABLED"; then
+    mkdir -p "$STATUS_DIR" "$COMMAND_DIR"
+    STATUS_TOTAL="$TOTAL"
+    write_status
+fi
 [[ "$TARGET_FPS" =~ ^[0-9]+$ && "$KEYFRAME_INTERVAL_SECONDS" =~ ^[0-9]+$ ]] || die "TARGET_FPS and KEYFRAME_INTERVAL_SECONDS must be integers"
 
 for stability_var in STALL_TIMEOUT FFMPEG_START_GRACE PROGRESS_INTERVAL RUNTIME_GRACE \
@@ -435,9 +602,16 @@ GOP=$((TARGET_FPS * KEYFRAME_INTERVAL_SECONDS))
 
 idx=0
 while true; do
+    process_commands
     video="${VIDEO_LIST[$idx]}"
     base="$(basename "$video")"
     log "Playing ($((idx + 1))/$TOTAL): $base"
+
+    STATUS_CURRENT="$base"
+    STATUS_INDEX=$((idx + 1))
+    STATUS_TOTAL="$TOTAL"
+    STATUS_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    STATUS_ELAPSED=0
 
     size="$(video_size "$video")"
     if [[ "$size" =~ ^([0-9]+)x([0-9]+)$ ]]; then
@@ -462,6 +636,7 @@ while true; do
     fi
 
     limit="$(compute_runtime_limit "$video")"
+    STATUS_LIMIT="$limit"
     if (( limit > 0 )); then
         log "Runtime limit for this video: ${limit}s"
     fi
@@ -478,6 +653,8 @@ while true; do
         rc=0
         if (( use_copy == 1 )); then
             log "Using copy mode: video=$VIDEO_BITRATE audio=$audio (第 $((attempt + 1)) 次尝试)"
+            STATUS_MODE="copy"
+            write_status
             stream_with_copy "$video" "$audio" "$limit" || rc=$?
             if (( rc == 0 )); then
                 break
@@ -486,23 +663,42 @@ while true; do
                 log "已在时长上限处结束本视频，继续下一个"
                 break
             fi
+            if (( rc == 126 )); then
+                log "已跳过当前视频"
+                break
+            fi
+            if (( rc == 127 )); then
+                graceful_stop
+            fi
+            STATUS_LAST_ERROR="copy mode rc=$rc"
             log "Copy mode failed (rc=$rc), retrying with transcode mode"
             force_transcode=1
             continue
         else
             log "Using transcode mode: video=$VIDEO_BITRATE maxrate=$MAXRATE bufsize=$VIDEO_BUFSIZE audio=$audio (第 $((attempt + 1)) 次尝试)"
+            STATUS_MODE="transcode"
+            write_status
             stream_with_transcode "$video" "$audio" "$video_filters" "$watermark_enabled" "$limit" || rc=$?
         fi
 
         if (( rc == 0 )); then
+            STATUS_LAST_ERROR=""
             break
         fi
         if (( rc == 125 )); then
             log "已在时长上限处结束本视频，继续下一个"
             break
         fi
+        if (( rc == 126 )); then
+            log "已跳过当前视频"
+            break
+        fi
+        if (( rc == 127 )); then
+            graceful_stop
+        fi
 
         attempt=$((attempt + 1))
+        STATUS_LAST_ERROR="rc=$rc, 第 $((attempt - 1)) 次重试"
         if (( attempt > RETRY_MAX )); then
             log "Stream failed after $RETRY_MAX retry(s), giving up: $base"
             break
@@ -516,6 +712,9 @@ while true; do
         sleep "$delay"
     done
 
+    STATUS_STATE="idle"
+    STATUS_ELAPSED=0
+    write_status
     sleep "$SLEEP_SECONDS"
 
     idx=$(((idx + 1) % TOTAL))

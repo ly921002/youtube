@@ -20,15 +20,22 @@ jobs:
 
       - name: 换行符必须是 LF
         run: |
-          if grep -qU $'\r' youtube.sh; then
-            echo "::error::youtube.sh 含有 CRLF 换行符，shell 脚本必须使用 LF"
-            exit 1
-          fi
+          for f in youtube.sh entrypoint.sh; do
+            if grep -qU $'\r' "$f"; then
+              echo "::error::$f 含有 CRLF 换行符，shell 脚本必须使用 LF"
+              exit 1
+            fi
+          done
 
       - name: bash 语法检查
-        run: bash -n youtube.sh
+        run: |
+          bash -n youtube.sh
+          bash -n entrypoint.sh
+
+      - name: Python 语法检查
+        run: python3 -m py_compile web/server.py
 
       - name: ShellCheck
         run: |
           docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable \
-            --shell=bash --severity=warning youtube.sh
+            --shell=bash --severity=warning youtube.sh entrypoint.sh

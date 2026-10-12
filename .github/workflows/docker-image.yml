@@ -6,6 +6,9 @@ on:
     paths:
       - 'Dockerfile'
       - 'youtube.sh'
+      - 'entrypoint.sh'
+      - 'web/**'
+      - '.github/workflows/docker-image.yml'
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -30,11 +33,27 @@ jobs:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+    # Docker Hub 命名空间只允许小写字母数字与 . _ - ，否则 tag 会报 invalid reference format
+    - name: Resolve Docker Hub namespace
+      id: hub
+      env:
+        DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+      run: |
+        set -eux
+        dh_user="$(printf '%s' "${DH_USER}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+        if ! printf '%s' "$dh_user" | grep -Eq '^[a-z0-9]+([._-][a-z0-9]+)*$'; then
+          echo "::warning::DOCKERHUB_USERNAME 不是合法的 Docker 命名空间，已跳过 Docker Hub 推送（ghcr 不受影响）"
+          dh_user=""
+        fi
+        echo "user=${dh_user}" >> "$GITHUB_OUTPUT"
+
+    # PR 只构建验证，绝不推送，避免未合并代码覆盖 latest
     - name: Build and Push Multi-Arch Image
+      if: steps.hub.outputs.user != ''
       uses: docker/build-push-action@v5
       with:
         context: .
         file: ./Dockerfile
-        push: true
+        push: ${{ github.event_name != 'pull_request' }}
         platforms: linux/amd64,linux/arm64
-        tags: ${{ secrets.DOCKERHUB_USERNAME }}/ffmpeg-autostream:latest
+        tags: ${{ steps.hub.outputs.user }}/ffmpeg-autostream:latest

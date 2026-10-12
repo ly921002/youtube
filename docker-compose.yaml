@@ -28,6 +28,12 @@ services:
       # RETRY_MAX: "3"
       # RETRY_BACKOFF: "5"
 
+      # ---- 无视频时的等待策略 ----
+      WAIT_FOR_VIDEOS: "yes" # 目录里暂时没视频时等待而不是退出，面板保持可访问
+      VIDEO_SCAN_INTERVAL: "30" # 等待期间重新扫描视频目录的间隔（秒）
+      # FOLDER: "2"            # 扫描深度：1=只看 /videos 下，2=含一层子目录
+      # VIDEO_EXTENSIONS: "mp4,avi,mkv,mov,flv,wmv,webm"
+
     volumes:
       - /home/ubuntu/videos:/videos
       - stream-status:/app/status

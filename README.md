@@ -68,6 +68,8 @@ docker compose up -d
 | `RETRY_BACKOFF` | `5` | 重试退避基数（秒），按 1×、2×、4× 指数递增 |
 | `RETRY_BACKOFF_MAX` | `300` | 退避上限（秒） |
 | `FFMPEG_STOP_TIMEOUT` | `10` | 优雅停止等待秒数，超时后升级为 `SIGTERM` |
+| `WAIT_FOR_VIDEOS` | `yes` | 目录里暂时没有可播放视频时进入等待状态而不是直接退出，`no` 恢复旧行为 |
+| `VIDEO_SCAN_INTERVAL` | `30` | 等待状态下重新扫描视频目录的间隔（秒），必须为正整数 |
 
 行为说明：
 
@@ -79,6 +81,11 @@ docker compose up -d
   超过 `RETRY_MAX` 后放弃当前视频并进入下一个。
 - **优雅退出**：收到 `SIGTERM` / `SIGINT`（如 `docker stop`）时先向 ffmpeg 发 `SIGINT`
   让它写完 FLV trailer 再退出，避免平台侧看到异常断流。
+- **无视频等待**：启动时或轮播过程中若目录里没有可播放视频，默认**不会退出**，
+  而是进入 `waiting` 状态、每 `VIDEO_SCAN_INTERVAL` 秒重扫一次，面板保持可访问；
+  把视频放进目录后会自动开始推流。设 `WAIT_FOR_VIDEOS=no` 可恢复"直接报错退出"的旧行为。
+- **重新扫描安全**：面板「重新扫描」或轮播一轮后的自动重扫，扫不到视频时只会
+  打印警告并沿用上一次的列表，不会再终止脚本。
 - Bash `set -euo pipefail` 错误处理
 - COPY 失败自动转码回退
 - `ffprobe` 视频轨道检测
@@ -137,6 +144,22 @@ ssh -L 8080:127.0.0.1:8080 user@your-vps
 
 `action` 可选：`next`、`prev`、`pause`、`resume`、`rescan`、`stop`。
 其中 `stop` 会结束脚本进程，需要容器配置 `restart: always` 才会自动拉起。
+
+### 控制语义
+
+| 动作 | 播放中触发 | 说明 |
+|------|-----------|------|
+| `next` | 立即停止当前推流，切到下一个 | 不计入失败重试 |
+| `prev` | 立即停止当前推流，切到上一个 | 不计入失败重试 |
+| `pause` | **立即停止当前推流**并进入 `paused` | 等 `resume`；期间仍响应 `next` / `prev` / `rescan` / `stop` |
+| `resume` | 仅在 `paused` 时生效 | 恢复后**重播当前视频** |
+| `rescan` | 立即重扫目录，不打断当前推流 | 扫不到视频时沿用旧列表，不会终止脚本 |
+| `stop` | 立即停止并结束脚本 | 依赖容器 `restart: always` 自动拉起 |
+
+> 暂停期间按钮会按状态互斥置灰（暂停时只能点「恢复」），避免误点。
+
+面板上的状态取值：`streaming`（直播中）、`idle`（间隔等待）、`paused`（已暂停）、
+`waiting`（等待视频）、`starting`（启动中）、`offline`（脚本未运行）。
 
 ## 📜 许可证
 

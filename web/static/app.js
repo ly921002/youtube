@@ -19,7 +19,9 @@
     errorCard: document.getElementById("errorCard"),
     lastError: document.getElementById("lastError"),
     toast: document.getElementById("toast"),
-    logoutBtn: document.getElementById("logoutBtn")
+    logoutBtn: document.getElementById("logoutBtn"),
+    btnPause: document.querySelector('button[data-action="pause"]'),
+    btnResume: document.querySelector('button[data-action="resume"]')
   };
 
   var STATE_TEXT = {
@@ -27,6 +29,7 @@
     idle: "等待中",
     paused: "已暂停",
     starting: "启动中",
+    waiting: "等待视频",
     offline: "未运行",
     unknown: "状态未知"
   };
@@ -70,6 +73,10 @@
 
     dom.badge.className = "badge" + (live ? " live" : "");
     dom.badgeText.textContent = STATE_TEXT[state] || state;
+
+    // 暂停 / 恢复按当前状态互斥，避免误点与"点了没反应"的错觉
+    if (dom.btnPause) { dom.btnPause.disabled = (state === "paused"); }
+    if (dom.btnResume) { dom.btnResume.disabled = (state !== "paused"); }
 
     dom.currentFile.textContent = data.current_file || "—";
     dom.position.textContent = data.total_videos

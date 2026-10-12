@@ -35,6 +35,10 @@ RETRY_BACKOFF="${RETRY_BACKOFF:-5}"               # 重试退避基数（秒）�
 RETRY_BACKOFF_MAX="${RETRY_BACKOFF_MAX:-300}"     # 退避上限（秒）
 FFMPEG_STOP_TIMEOUT="${FFMPEG_STOP_TIMEOUT:-10}"  # 优雅停止等待秒数，超时后升级为 SIGTERM
 
+# ===== 无视频时的等待策略 =====
+WAIT_FOR_VIDEOS="${WAIT_FOR_VIDEOS:-yes}"         # 目录里暂时没有可播放视频时是否等待（no=直接退出，保持旧行为）
+VIDEO_SCAN_INTERVAL="${VIDEO_SCAN_INTERVAL:-30}"  # 等待/暂停期间重新扫描视频目录的间隔（秒）
+
 # ===== Web 控制面板相关配置 =====
 STATUS_ENABLED="${STATUS_ENABLED:-yes}"
 STATUS_DIR="${STATUS_DIR:-/app/status}"
@@ -73,6 +77,7 @@ escape_filter_path() {
 # 当前 ffmpeg 子进程 pid，供信号处理使用
 FF_PID=""
 APP_START_TIME="$(date +%s)"
+VIDEO_LIST=()
 
 # 供 Web 面板读取的运行时状态
 STATUS_STATE="starting"
@@ -86,6 +91,7 @@ STATUS_STARTED_AT=""
 STATUS_LAST_ERROR=""
 RTMP_TARGETS_MASKED=()
 PENDING_COMMAND=""
+PENDING_COMMAND_FILE=""
 
 graceful_stop() {
     log "收到停止信号，正在结束当前推流..."
@@ -250,20 +256,41 @@ write_status() {
     mv -f "$tmp" "$STATUS_FILE" 2>/dev/null || rm -f "$tmp"
 }
 
-# 从指令目录取一条待处理指令（文件名按时间戳排序，处理完即删除）
-check_command() {
+# 安全移动播放下标：TOTAL 为 0（还没扫到视频）时不做取模，避免除零
+step_index() {
+    local delta="$1"
+    (( TOTAL > 0 )) || return 0
+    idx=$(((idx + delta + TOTAL) % TOTAL))
+}
+
+# 窥视指令目录里最早的一条指令，**不删除文件**。
+# 调用方只有真正处理了这条指令，才可以调用 consume_command 把它删掉；
+# 否则指令会保留下来留给能处理它的地方（比如播放中收到的 rescan 留给主循环）。
+peek_command() {
     PENDING_COMMAND=""
+    PENDING_COMMAND_FILE=""
     is_yes "$STATUS_ENABLED" || return 0
     [[ -d "$COMMAND_DIR" ]] || return 0
     local file cmd
     for file in "$COMMAND_DIR"/*; do
         [[ -f "$file" ]] || continue
         cmd="$(tr -d '[:space:]' <"$file" 2>/dev/null)"
-        rm -f "$file" 2>/dev/null || true
-        [[ -n "$cmd" ]] || continue
+        if [[ -z "$cmd" ]]; then
+            rm -f "$file" 2>/dev/null || true
+            continue
+        fi
         PENDING_COMMAND="$cmd"
+        PENDING_COMMAND_FILE="$file"
         return 0
     done
+}
+
+# 确认消费当前指令（删除指令文件）
+consume_command() {
+    [[ -n "$PENDING_COMMAND_FILE" ]] || return 0
+    rm -f "$PENDING_COMMAND_FILE" 2>/dev/null || true
+    PENDING_COMMAND=""
+    PENDING_COMMAND_FILE=""
 }
 
 # 视频间隔期间处理控制指令，可能修改 idx / TOTAL，也可能暂停或退出
@@ -271,44 +298,133 @@ process_commands() {
     is_yes "$STATUS_ENABLED" || return 0
     local cmd
     while true; do
-        check_command
+        peek_command
         cmd="$PENDING_COMMAND"
         case "$cmd" in
             "")
                 return 0
                 ;;
             next | skip)
+                consume_command
                 log "收到控制指令：跳到下一个"
-                idx=$(((idx + 1) % TOTAL))
+                step_index 1
                 ;;
             prev)
+                consume_command
                 log "收到控制指令：回到上一个"
-                idx=$(((idx - 1 + TOTAL) % TOTAL))
+                step_index -1
                 ;;
             rescan)
-                log "收到控制指令：重新扫描视频目录"
-                load_videos
-                TOTAL=${#VIDEO_LIST[@]}
-                (( idx < TOTAL )) || idx=0
+                consume_command
+                rescan_videos
                 ;;
             pause)
-                log "收到控制指令：暂停（等待 resume）"
-                STATUS_STATE="paused"
-                write_status
-                while true; do
-                    sleep 2
-                    check_command
-                    case "$PENDING_COMMAND" in
-                        resume) log "收到控制指令：恢复"; break ;;
-                        next | skip) log "收到控制指令：跳到下一个"; idx=$(((idx + 1) % TOTAL)); break ;;
-                        stop) graceful_stop ;;
-                    esac
-                done
+                consume_command
+                pause_until_resume
                 ;;
             stop)
+                consume_command
+                graceful_stop
+                ;;
+            *)
+                # 未知指令直接丢弃，避免死循环
+                log "忽略未知控制指令：$cmd"
+                consume_command
+                ;;
+        esac
+    done
+}
+
+# 重新扫描视频目录。扫描不到可播放视频时**不会**终止脚本，而是保留原列表。
+rescan_videos() {
+    log "收到控制指令：重新扫描视频目录"
+    local -a old_list=()
+    if [[ ${#VIDEO_LIST[@]} -gt 0 ]]; then
+        old_list=("${VIDEO_LIST[@]}")
+    fi
+
+    if load_videos; then
+        TOTAL=${#VIDEO_LIST[@]}
+        (( idx < TOTAL )) || idx=0
+        log "重新扫描完成，共 $TOTAL 个视频"
+    else
+        VIDEO_LIST=()
+        if [[ ${#old_list[@]} -gt 0 ]]; then
+            VIDEO_LIST=("${old_list[@]}")
+        fi
+        TOTAL=${#VIDEO_LIST[@]}
+        (( idx < TOTAL )) || idx=0
+        log "重新扫描未找到可播放视频，保持原有列表（$TOTAL 个）"
+    fi
+    STATUS_TOTAL="$TOTAL"
+    write_status
+}
+
+# 暂停推流，直到收到 resume（期间仍响应 next / prev / rescan / stop）
+pause_until_resume() {
+    log "收到控制指令：暂停（等待 resume）"
+    STATUS_STATE="paused"
+    write_status
+    while true; do
+        sleep 2
+        peek_command
+        case "$PENDING_COMMAND" in
+            resume)
+                consume_command
+                log "收到控制指令：恢复推流，重新播放当前视频"
+                STATUS_STATE="idle"
+                write_status
+                return 0
+                ;;
+            next | skip)
+                consume_command
+                log "收到控制指令：跳到下一个"
+                step_index 1
+                STATUS_STATE="idle"
+                write_status
+                return 0
+                ;;
+            prev)
+                consume_command
+                log "收到控制指令：回到上一个"
+                step_index -1
+                STATUS_STATE="idle"
+                write_status
+                return 0
+                ;;
+            rescan)
+                consume_command
+                rescan_videos
+                ;;
+            stop)
+                consume_command
                 graceful_stop
                 ;;
         esac
+    done
+}
+
+# 目录里还没有可播放视频时，进入等待状态并周期性重扫；面板保持可用
+wait_for_videos() {
+    log "VIDEO_DIR 中暂无可播放视频，进入等待状态（每 ${VIDEO_SCAN_INTERVAL}s 重新扫描）"
+    STATUS_STATE="waiting"
+    STATUS_CURRENT=""
+    STATUS_INDEX=0
+    STATUS_TOTAL=0
+    write_status
+
+    while true; do
+        if load_videos; then
+            TOTAL=${#VIDEO_LIST[@]}
+            STATUS_TOTAL="$TOTAL"
+            log "扫描到 $TOTAL 个可播放视频，开始推流"
+            return 0
+        fi
+        STATUS_STATE="waiting"
+        write_status
+        # 等待期间也要能响应指令（rescan 立即重扫 / stop 退出）
+        process_commands
+        sleep "$VIDEO_SCAN_INTERVAL"
     done
 }
 
@@ -332,9 +448,14 @@ find_subtitle_for_video() {
     return 1
 }
 
+# 扫描视频目录并填充 VIDEO_LIST。
+# 返回值：0=至少有一个可播放视频；1=目录不存在或没有可播放视频（不再直接终止脚本）
 load_videos() {
     log "Scanning videos in $VIDEO_DIR"
-    [[ -d "$VIDEO_DIR" ]] || die "VIDEO_DIR does not exist: $VIDEO_DIR"
+    if [[ ! -d "$VIDEO_DIR" ]]; then
+        log "VIDEO_DIR does not exist: $VIDEO_DIR"
+        return 1
+    fi
 
     local -a video_find_args raw_videos valid
     local file subtitle
@@ -357,8 +478,12 @@ load_videos() {
         fi
     done
 
-    [[ ${#valid[@]} -gt 0 ]] || die "No playable videos found in $VIDEO_DIR"
+    if [[ ${#valid[@]} -eq 0 ]]; then
+        log "No playable videos found in $VIDEO_DIR"
+        return 1
+    fi
     mapfile -t VIDEO_LIST < <(printf "%s\n" "${valid[@]}" | sort_videos)
+    return 0
 }
 
 choose_bitrate() {
@@ -440,7 +565,9 @@ build_video_filters() {
     printf '%s' "${filters[*]}"
 }
 
-# 返回值：0=正常结束；124=判定卡死被终止；125=达到时长上限被终止；其他=ffmpeg 自身退出码
+# 返回值：0=正常结束；124=判定卡死被终止；125=达到时长上限被终止；
+#         126=被控制指令跳过；127=被控制指令停止；128=被控制指令暂停；129=被控制指令切到上一个
+#         其他=ffmpeg 自身退出码
 # 用法：run_ffmpeg <本次最长允许秒数,0 表示不限> <ffmpeg 参数...>
 run_ffmpeg() {
     local limit="$1"
@@ -462,18 +589,42 @@ run_ffmpeg() {
         sleep "$PROGRESS_INTERVAL"
         kill -0 "$pid" 2>/dev/null && elapsed=$((elapsed + PROGRESS_INTERVAL))
 
-        # 播放中也能响应“下一个 / 停止”
-        check_command
+        # 播放中也能响应「下一个 / 上一个 / 暂停 / 停止」
+        # 注意：这里只消费自己能处理的指令，rescan 等留给主循环，不会被吞掉
+        peek_command
         case "$PENDING_COMMAND" in
             next | skip)
+                consume_command
                 log "收到控制指令：立即跳到下一个"
                 rc=126
                 break
                 ;;
+            prev)
+                consume_command
+                log "收到控制指令：立即回到上一个"
+                rc=129
+                break
+                ;;
+            pause)
+                consume_command
+                log "收到控制指令：立即暂停当前推流"
+                rc=128
+                break
+                ;;
             stop)
+                consume_command
                 log "收到控制指令：停止推流"
                 rc=127
                 break
+                ;;
+            rescan)
+                # 播放中也可以立即重扫：只刷新列表，不打断当前推流
+                consume_command
+                rescan_videos
+                ;;
+            *)
+                # 播放中处理不了的指令直接丢弃，避免一直堵住指令队列
+                consume_command
                 ;;
         esac
 
@@ -582,7 +733,9 @@ stream_with_transcode() {
 }
 
 build_outputs
-load_videos
+if ! load_videos; then
+    is_yes "$WAIT_FOR_VIDEOS" || die "No playable videos found in $VIDEO_DIR"
+fi
 TOTAL=${#VIDEO_LIST[@]}
 
 if is_yes "$STATUS_ENABLED"; then
@@ -596,12 +749,18 @@ for stability_var in STALL_TIMEOUT FFMPEG_START_GRACE PROGRESS_INTERVAL RUNTIME_
     MAX_RUNTIME RETRY_MAX RETRY_BACKOFF RETRY_BACKOFF_MAX FFMPEG_STOP_TIMEOUT; do
     [[ "${!stability_var}" =~ ^[0-9]+$ ]] || die "$stability_var must be a non-negative integer (got '${!stability_var}')"
 done
+[[ "$VIDEO_SCAN_INTERVAL" =~ ^[0-9]+$ && "$VIDEO_SCAN_INTERVAL" -gt 0 ]] || die "VIDEO_SCAN_INTERVAL must be a positive integer (got '$VIDEO_SCAN_INTERVAL')"
 
 GOP=$((TARGET_FPS * KEYFRAME_INTERVAL_SECONDS))
 (( GOP > 0 )) || die "GOP must be greater than 0"
 
 idx=0
 while true; do
+    # 目录里还没有视频时先等待，期间面板保持可用
+    if [[ ${#VIDEO_LIST[@]} -eq 0 ]]; then
+        wait_for_videos
+    fi
+
     process_commands
     video="${VIDEO_LIST[$idx]}"
     base="$(basename "$video")"
@@ -667,6 +826,10 @@ while true; do
                 log "已跳过当前视频"
                 break
             fi
+            if (( rc == 128 || rc == 129 )); then
+                # 暂停 / 切上一个：都不是失败，不要降级成转码重试
+                break
+            fi
             if (( rc == 127 )); then
                 graceful_stop
             fi
@@ -693,6 +856,10 @@ while true; do
             log "已跳过当前视频"
             break
         fi
+        if (( rc == 128 || rc == 129 )); then
+            # 暂停 / 切上一个：都不是失败，不计入重试次数
+            break
+        fi
         if (( rc == 127 )); then
             graceful_stop
         fi
@@ -712,14 +879,25 @@ while true; do
         sleep "$delay"
     done
 
+    # rc=128 表示播放中被暂停：先停流等待 resume，恢复后重播当前视频
+    if (( rc == 128 )); then
+        pause_until_resume
+    fi
+
     STATUS_STATE="idle"
     STATUS_ELAPSED=0
     write_status
     sleep "$SLEEP_SECONDS"
 
-    idx=$(((idx + 1) % TOTAL))
+    case "$rc" in
+        128) ;;                 # 暂停恢复后重播当前视频，下标不动
+        129) step_index -1 ;;   # 切上一个
+        *)   step_index 1 ;;
+    esac
     if [[ $idx -eq 0 ]]; then
-        load_videos
+        if ! load_videos; then
+            log "重新扫描未找到可播放视频，沿用上一次的列表"
+        fi
         TOTAL=${#VIDEO_LIST[@]}
     fi
 done
